@@ -1,0 +1,12 @@
+[package]
+name = "rust-bitcoin-indexer"
+version = "0.1.0"
+edition = "2021"
+description = "Bitcoin indexer"
+keywords = ["bitcoin", "indexer"]
+homepage = "https://github.com/FairgateLabs/rust-bitcoin-indexer"
+repository = "https://github.com/FairgateLabs/rust-bitcoin-indexer"
+readme = "README.md"
+
+
+[dependencies]
