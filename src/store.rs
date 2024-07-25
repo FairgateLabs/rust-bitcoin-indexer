@@ -12,19 +12,9 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
 
+#[derive(Clone)]
 pub struct Store {
     file_path: String,
-}
-
-pub trait StoreClient {
-    fn get_best_block(&mut self) -> Result<BlockHeight>;
-
-    fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>>;
-
-    /// Get the block by id, along with id of the previous block hash
-    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<(BlockInfo)>>;
-
-    fn save_block(&mut self, block: &BlockInfo) -> Result<()>;
 }
 
 impl Store {
@@ -40,12 +30,10 @@ impl Store {
     {
         let full_path = format!("{}/{}.json", self.file_path, file_name);
         let mut file = File::open(full_path).context("Error opening file")?;
-
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
 
         let data: Vec<T> = serde_json::from_str(&contents).context("Error deserializing data")?;
-
         Ok(data)
     }
 
@@ -69,6 +57,17 @@ impl Store {
     }
 }
 
+pub trait StoreClient {
+    fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>>;
+
+    fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>>;
+
+    /// Get the block by id, along with id of the previous block hash
+    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<BlockInfo>>;
+
+    fn save_block(&mut self, block: &BlockInfo) -> Result<()>;
+}
+
 #[automock]
 impl StoreClient for Store {
     fn save_block(&mut self, block: &BlockInfo) -> Result<()> {
@@ -87,15 +86,15 @@ impl StoreClient for Store {
         Ok(())
     }
 
-    fn get_best_block(&mut self) -> Result<BlockHeight> {
+    fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>> {
         let blocks: Vec<BlockInfo> = self.get_data::<BlockInfo>("blocks")?;
 
         if blocks.is_empty() {
-            return Ok(0);
+            return Ok(None);
         }
 
         //Invariant: blocks ordered by height, 0 is the best block
-        Ok(blocks[0].height)
+        Ok(Some(blocks[0].height))
     }
 
     fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>> {
@@ -120,7 +119,7 @@ mod test {
     #[test]
     fn get_data() -> Result<(), anyhow::Error> {
         let mut store = Store::new("data")?;
-        let height = store.get_best_block()?;
+        let height = store.get_best_block_height()?;
         println!("best block {:?}", height);
 
         let block_hash = store.get_block_hash_by_height(2)?;

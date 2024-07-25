@@ -3,12 +3,6 @@ pub use bitcoin::hashes::{hash160::Hash as Hash160, sha256d::Hash as Sha256dHash
 pub use bitcoin::hashes::{hex::FromHex as _, Hash};
 use serde::{Deserialize, Serialize};
 
-pub struct Config {
-    pub db_file_path: String,
-    pub node_rpc_url: String,
-    pub checkpoint_height: Option<u32>,
-}
-
 pub type BlockHeight = u32;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
