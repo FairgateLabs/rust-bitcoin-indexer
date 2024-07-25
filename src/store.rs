@@ -87,7 +87,9 @@ impl StoreClient for Store {
     }
 
     fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>> {
-        let blocks: Vec<BlockInfo> = self.get_data::<BlockInfo>("blocks")?;
+        let blocks: Vec<BlockInfo> = self
+            .get_data::<BlockInfo>("blocks")
+            .context("There was an error trying to call get_best_block_height in Store")?;
 
         if blocks.is_empty() {
             return Ok(None);
@@ -98,13 +100,17 @@ impl StoreClient for Store {
     }
 
     fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>> {
-        let blocks: Vec<BlockInfo> = self.get_data::<BlockInfo>("blocks")?;
+        let blocks: Vec<BlockInfo> = self
+            .get_data::<BlockInfo>("blocks")
+            .context("There was an error trying to call get_block_hash_by_height in Store")?;
         let block = blocks.iter().find(|b| b.height == height).map(|b| b.hash);
         Ok(block)
     }
 
     fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<BlockInfo>> {
-        let blocks: Vec<BlockInfo> = self.get_data::<BlockInfo>("blocks")?;
+        let blocks: Vec<BlockInfo> = self
+            .get_data::<BlockInfo>("blocks")
+            .context("There was an error trying to call get_block_by_hash in Store")?;
         let block = blocks.into_iter().find(|b| b.hash == *hash);
         Ok(block)
     }

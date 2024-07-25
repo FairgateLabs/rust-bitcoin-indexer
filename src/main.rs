@@ -27,7 +27,12 @@ fn main() -> Result<()> {
     let bitcoin_client = BitcoinClient::new(&node_rpc_url)?;
     let store = Store::new(&db_file_path)?;
     let mut indexer = Indexer::new(Box::new(bitcoin_client), Box::new(store), checkpoint_height)?;
-    let _ = indexer.run();
+    let a = indexer.run();
+
+    if let Err(err) = a {
+        log::error!("Error: {:?}", err);
+        std::process::exit(1);
+    }
 
     Ok(())
 }
@@ -45,5 +50,6 @@ fn get_checkpoint() -> Result<Option<u32>, anyhow::Error> {
             }
         };
     }
+
     Ok(checkpoint_height)
 }

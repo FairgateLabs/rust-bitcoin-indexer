@@ -66,10 +66,10 @@ impl Indexer {
     pub fn run(&mut self) -> Result<()> {
         self.blockchain_height = self.bitcoin_client.get_best_block()? as BlockHeight;
         let network = self.bitcoin_client.get_blockchain_info()?;
-        let height_to_sync = self.define_height_to_sync()?;
 
         info!("Connected to chain {}", network);
         info!("Chain best block at {}H", self.blockchain_height);
+        let height_to_sync = self.define_height_to_sync()?;
         info!("Start synchronizing from {}H", height_to_sync);
 
         Ok(())
