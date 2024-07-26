@@ -92,14 +92,13 @@ impl Indexer {
                 .get_block_id_by_height(self.height_to_sync)
                 .unwrap();
 
-            info!("XXX {:?}", new_block_hash);
             if new_block_hash.is_none() {
                 //run a thread sleep for 2 minutes.
                 info!(
                     "Waiting for new block at height {}H to be mined",
                     self.height_to_sync
                 );
-                sleep(Duration::from_secs(120));
+                sleep(Duration::from_secs(10));
                 continue;
             }
 
@@ -124,24 +123,18 @@ impl Indexer {
                 let new_block_info_to_save = BlockInfo {
                     height: self.height_to_sync,
                     hash: new_block_hash.unwrap(),
-                    prev_hash: prev_block_hash.unwrap(),
+                    prev_hash: new_block.header.prev_blockhash,
                 };
 
+                info!("New block at height {}H", self.height_to_sync);
                 self.store.save_block(&new_block_info_to_save)?;
 
                 self.height_to_sync += 1;
                 continue;
             }
 
-            let mut new_block_info_to_save = BlockInfo {
-                height: self.height_to_sync,
-                hash: new_block_hash.unwrap(),
-                prev_hash: new_block.header.prev_blockhash,
-            };
-
-            // if new block prev hash is different than the previous block hash, then we need to reorg
-            error!(
-                        "Block height mismatch. Expected block at height {}H with hash {}, but got block at height {}H with hash {:?}",
+            // if current block prev_hash is different than the previous block hash, then we need to reorg
+            error!( "Block height mismatch. Expected block at height {}H with hash {}, but got block at height {}H with hash {:?}",
                         self.height_to_sync,
                         new_block.header.prev_blockhash,
                         prev_height,
@@ -149,19 +142,6 @@ impl Indexer {
                     );
 
             self.height_to_sync -= 1;
-
-            let prev_block = self
-                .bitcoin_client
-                .get_block_by_id(&prev_block_hash.unwrap())?;
-
-            new_block_info_to_save = BlockInfo {
-                height: self.height_to_sync,
-                hash: new_block_hash.unwrap(),
-                prev_hash: new_block.header.prev_blockhash,
-            };
-
-            info!("New block at height {}H", self.height_to_sync);
-            self.store.save_block(&new_block_info_to_save)?;
         }
     }
 }
