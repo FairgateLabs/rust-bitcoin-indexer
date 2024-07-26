@@ -10,6 +10,7 @@ pub struct BlockInfo {
     pub height: BlockHeight,
     pub hash: BlockHash,
     pub prev_hash: BlockHash,
+    pub txs: Vec<Txid>,
 }
 
 /// Block data from BitcoinCore (`rust-bitcoin`)

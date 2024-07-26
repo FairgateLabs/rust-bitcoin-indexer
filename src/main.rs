@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use log::warn;
+use log::{error, warn};
 use rust_bitcoin_indexer::{
     args::Args, bitcoin_client::BitcoinClient, indexer::Indexer, store::Store, types::BlockHeight,
 };
@@ -23,14 +23,13 @@ fn main() -> Result<()> {
         .context("No Bitcoin rpc url provided")?;
 
     let checkpoint_height: Option<u32> = get_checkpoint()?;
-
     let bitcoin_client = BitcoinClient::new(&node_rpc_url)?;
     let store = Store::new(&db_file_path)?;
     let mut indexer = Indexer::new(Box::new(bitcoin_client), Box::new(store), checkpoint_height)?;
     let a = indexer.run();
 
     if let Err(err) = a {
-        log::error!("Error: {:?}", err);
+        error!("Error: {:?}", err);
         std::process::exit(1);
     }
 

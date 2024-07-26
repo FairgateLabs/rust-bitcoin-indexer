@@ -1,5 +1,5 @@
-use crate::types::BlockHeight;
-use anyhow::{Ok, Result};
+use crate::types::{BlockHeight, BlockInfo};
+use anyhow::{Context, Ok, Result};
 use bitcoin::{Block, BlockHash};
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use mockall::automock;
@@ -29,6 +29,8 @@ impl BitcoinClient {
 pub trait BitcoinClientApi {
     fn get_best_block(&self) -> Result<BlockHeight>;
 
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<BlockInfo>>;
+
     fn get_block_id_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
 
     /// Get the block by id, along with id of the previous block hash
@@ -46,6 +48,26 @@ impl BitcoinClientApi for BitcoinClient {
 
     fn get_best_block(&self) -> Result<BlockHeight> {
         Ok(self.client.get_block_count()? as u32)
+    }
+
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<BlockInfo>> {
+        let block_hash = self.get_block_id_by_height(height)?;
+
+        if block_hash.is_none() {
+            return Ok(None);
+        }
+
+        let block_hash = block_hash.unwrap();
+        let block = self.get_block_by_id(&block_hash)?.unwrap();
+
+        let block_info = BlockInfo {
+            hash: block_hash,
+            height,
+            prev_hash: block.header.prev_blockhash,
+            txs: block.txdata.iter().map(|tx| tx.compute_txid()).collect(),
+        };
+
+        Ok(Some(block_info))
     }
 
     fn get_block_id_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>> {

@@ -11,6 +11,7 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
+use std::path::Path;
 
 #[derive(Clone)]
 pub struct Store {
@@ -26,11 +27,24 @@ impl Store {
 
     pub fn get_data<T>(&mut self, file_name: &str) -> Result<Vec<T>>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Serialize,
     {
         let full_path = format!("{}/{}.json", self.file_path, file_name);
-        let mut file = File::open(full_path).context("Error opening file")?;
+        let file_exists = Path::new(&full_path).exists();
+        let mut file: File;
+
+        if file_exists {
+            file = File::open(&full_path).context("Error opening file")?;
+        } else {
+            file = File::create(&full_path).context("Error creating file")?;
+
+            let empty_blocks = Vec::<T>::new();
+            let _ = self.write_data(file_name, &empty_blocks);
+            file = File::open(full_path).context("Error opening file")?;
+        }
+
         let mut contents = String::new();
+
         file.read_to_string(&mut contents)?;
 
         let data: Vec<T> = serde_json::from_str(&contents).context("Error deserializing data")?;

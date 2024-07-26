@@ -1,4 +1,4 @@
-use std::{thread::sleep, time::Duration};
+use std::{io::stdout, thread::sleep, time::Duration};
 
 use crate::{
     bitcoin_client::BitcoinClientApi,
@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use log::{error, info, warn};
-
+use std::io::{self, Write};
 pub struct Indexer {
     pub checkpoint_height: Option<BlockHeight>,
     height_to_sync: BlockHeight,
@@ -83,51 +83,41 @@ impl Indexer {
             // Get new block at height_to_sync
             //   Check if new block prev hash is correct
             //     If not, there is reorg
-            //       New height_to_sync is height_to_sync -1
+            //       We go back to the previous blcok, then height_to_sync is height_to_sync - 1
             // Save new block
             // Increment height_to_sync
 
-            let new_block_hash = self
+            let block = self
                 .bitcoin_client
-                .get_block_id_by_height(self.height_to_sync)
-                .unwrap();
+                .get_block_by_height(self.height_to_sync)?;
 
-            if new_block_hash.is_none() {
+            if block.is_none() {
                 //run a thread sleep for 2 minutes.
-                info!(
-                    "Waiting for new block at height {}H to be mined",
-                    self.height_to_sync
-                );
-                sleep(Duration::from_secs(10));
+                info!("Waiting for new block...");
+                sleep(Duration::from_secs(120));
                 continue;
             }
 
-            let new_block = self
-                .bitcoin_client
-                .get_block_by_id(&new_block_hash.unwrap())?
-                .unwrap();
-
+            let block = block.unwrap();
             let prev_height = self.height_to_sync.saturating_sub(1);
             let prev_block_hash = self.bitcoin_client.get_block_id_by_height(prev_height)?;
 
             // Is Genesis block or a checkpoint block
             if self.height_to_sync == 0
                 || prev_block_hash.is_none()
-                || new_block.header.prev_blockhash == prev_block_hash.unwrap()
+                || block.prev_hash == prev_block_hash.unwrap()
             {
                 if prev_block_hash.is_none() {
                     warn!("Block height not found. Then could be a checkpoint block",);
                     // Then we don't need to check prev block because does not exist.
                 }
 
-                let new_block_info_to_save = BlockInfo {
-                    height: self.height_to_sync,
-                    hash: new_block_hash.unwrap(),
-                    prev_hash: new_block.header.prev_blockhash,
-                };
+                info!(
+                    "New block at height {}H/{}H",
+                    self.height_to_sync, blockchain_height
+                );
 
-                info!("New block at height {}H", self.height_to_sync);
-                self.store.save_block(&new_block_info_to_save)?;
+                self.store.save_block(&block)?;
 
                 self.height_to_sync += 1;
                 continue;
@@ -136,7 +126,7 @@ impl Indexer {
             // if current block prev_hash is different than the previous block hash, then we need to reorg
             error!( "Block height mismatch. Expected block at height {}H with hash {}, but got block at height {}H with hash {:?}",
                         self.height_to_sync,
-                        new_block.header.prev_blockhash,
+                        block.hash,
                         prev_height,
                         prev_block_hash.unwrap()
                     );
