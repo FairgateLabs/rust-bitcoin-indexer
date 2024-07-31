@@ -1,5 +1,5 @@
 use crate::types::{BlockHeight, BlockInfo};
-use anyhow::{Context, Ok, Result};
+use anyhow::{Ok, Result};
 use bitcoin::{Block, BlockHash};
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use mockall::automock;

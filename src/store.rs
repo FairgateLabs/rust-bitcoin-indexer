@@ -31,17 +31,14 @@ impl Store {
     {
         let full_path = format!("{}/{}.json", self.file_path, file_name);
         let file_exists = Path::new(&full_path).exists();
-        let mut file: File;
 
-        if file_exists {
-            file = File::open(&full_path).context("Error opening file")?;
-        } else {
-            file = File::create(&full_path).context("Error creating file")?;
-
+        if !file_exists {
+            let _ = File::create(&full_path).context("Error creating file")?;
             let empty_blocks = Vec::<T>::new();
             let _ = self.write_data(file_name, &empty_blocks);
-            file = File::open(full_path).context("Error opening file")?;
         }
+
+        let mut file = File::open(&full_path).context("Error opening file")?;
 
         let mut contents = String::new();
 
@@ -156,6 +153,7 @@ mod test {
             height: 4,
             hash: block_hash,
             prev_hash: block_hash,
+            txs: vec![],
         };
 
         store.save_block(&block_3)?;
