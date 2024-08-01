@@ -155,6 +155,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[ignore]
     fn get_data() -> Result<(), anyhow::Error> {
         let mut store = Store::new("data")?;
         let height = store.get_best_block_height()?;

@@ -20,8 +20,3 @@ pub struct Block {
     pub txs: Vec<Txid>,
     pub orphan: bool,
 }
-
-/// Block data from BitcoinCore (`rust-bitcoin`)
-pub type BlockHex = String;
-pub type TxHex = String;
-pub type TxHash = Sha256dHash;
