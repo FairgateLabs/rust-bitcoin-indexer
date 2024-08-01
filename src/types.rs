@@ -12,6 +12,14 @@ pub struct BlockInfo {
     pub prev_hash: BlockHash,
     pub txs: Vec<Txid>,
 }
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    pub height: BlockHeight,
+    pub hash: BlockHash,
+    pub prev_hash: BlockHash,
+    pub txs: Vec<Txid>,
+    pub orphan: bool,
+}
 
 /// Block data from BitcoinCore (`rust-bitcoin`)
 pub type BlockHex = String;

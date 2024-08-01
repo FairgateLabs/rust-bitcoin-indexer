@@ -1,3 +1,4 @@
+use crate::types::Block;
 use crate::types::BlockHeight;
 use crate::types::BlockInfo;
 use anyhow::Context;
@@ -74,7 +75,7 @@ pub trait StoreClient {
     fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>>;
 
     /// Get the block by id, along with id of the previous block hash
-    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<BlockInfo>>;
+    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<Block>>;
 
     fn save_block(&mut self, block: &BlockInfo) -> Result<()>;
 }
@@ -82,47 +83,67 @@ pub trait StoreClient {
 #[automock]
 impl StoreClient for Store {
     fn save_block(&mut self, block: &BlockInfo) -> Result<()> {
-        let mut blocks: Vec<BlockInfo> = self.get_data::<BlockInfo>("blocks")?;
+        let mut blocks: Vec<Block> = self.get_data::<Block>("blocks")?;
 
-        let new_block = block.clone();
+        let new_block = Block {
+            height: block.height,
+            hash: block.hash,
+            prev_hash: block.prev_hash,
+            txs: block.txs.clone(),
+            orphan: false,
+        };
 
-        if let Some(pos) = blocks.iter().position(|b| b.height == block.height) {
-            blocks[pos] = new_block
+        if let Some(pos) = blocks.iter().position(|b| b.height == new_block.height) {
+            let block_hash = blocks[pos].hash;
+            let new_block_hash = new_block.hash;
+
+            if block_hash != new_block_hash {
+                blocks[pos].orphan = true;
+                blocks.insert(pos + 1, new_block);
+            } else {
+                blocks[pos] = new_block;
+            }
         } else {
             blocks.insert(0, new_block);
         }
 
-        self.write_data::<BlockInfo>("blocks", &blocks)?;
+        self.write_data::<Block>("blocks", &blocks)?;
 
         Ok(())
     }
 
     fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>> {
-        let blocks: Vec<BlockInfo> = self
-            .get_data::<BlockInfo>("blocks")
+        let blocks: Vec<Block> = self
+            .get_data::<Block>("blocks")
             .context("There was an error trying to call get_best_block_height in Store")?;
 
         if blocks.is_empty() {
             return Ok(None);
         }
 
-        //Invariant: blocks ordered by height, 0 is the best block
-        Ok(Some(blocks[0].height))
+        // Invariant: blocks are ordered by height, 0 is the best block
+        let last_height_block = Some(blocks[0].height);
+
+        Ok(last_height_block)
     }
 
     fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>> {
-        let blocks: Vec<BlockInfo> = self
-            .get_data::<BlockInfo>("blocks")
+        let blocks: Vec<Block> = self
+            .get_data::<Block>("blocks")
             .context("There was an error trying to call get_block_hash_by_height in Store")?;
-        let block = blocks.iter().find(|b| b.height == height).map(|b| b.hash);
+        let block = blocks
+            .iter()
+            .find(|b| b.height == height && !b.orphan)
+            .map(|b| b.hash);
         Ok(block)
     }
 
-    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<BlockInfo>> {
-        let blocks: Vec<BlockInfo> = self
-            .get_data::<BlockInfo>("blocks")
+    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<Block>> {
+        let blocks: Vec<Block> = self
+            .get_data::<Block>("blocks")
             .context("There was an error trying to call get_block_by_hash in Store")?;
-        let block = blocks.into_iter().find(|b| b.hash == *hash);
+        let block = blocks.into_iter().find(|b| b.hash == *hash && !b.orphan);
+
         Ok(block)
     }
 }

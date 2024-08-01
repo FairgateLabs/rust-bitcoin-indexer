@@ -68,12 +68,11 @@ impl Indexer {
         }
 
         // if current block prev_hash is different than the previous block hash, then we need to reorg
-        error!( "Block height mismatch. Expected block at height {}H with hash {}, but got block at height {}H with hash {:?}",
-                        self.height_to_sync,
-                        block.hash,
-                        prev_height,
-                        prev_block_hash.unwrap()
-                    );
+        error!(
+            "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
+            self.height_to_sync,
+            prev_block_hash.unwrap()
+        );
 
         self.height_to_sync -= 1;
 

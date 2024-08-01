@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 
     let indexed_height = store.get_best_block_height()?;
     let height_to_sync =
-        define_height_to_sync(indexed_height, blockchain_height, checkpoint_height)?;
+        define_height_to_sync(checkpoint_height, blockchain_height, indexed_height)?;
     info!("Start synchronizing from {}H", height_to_sync);
 
     let mut indexer = Indexer::new(Box::new(bitcoin_client), Box::new(store), height_to_sync)?;
