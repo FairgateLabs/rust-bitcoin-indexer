@@ -18,7 +18,7 @@ The Bitcoin Indexer is a Rust-based tool designed to extract and store block and
 To set up the Bitcoin Indexer, you need to create a **.env** file. You can use the **.env.example** file as a reference.
 
 ### Bitcoin Indexed Data
-Blocks and transactions data will be saved in `blocks.json` file in the folder you defined in the **DB_FILE_PATH** env.  
+Blocks and transaction data will be saved in the `blocks.json` file in the folder you defined in the **DB_FILE_PATH** env.  
 
 ### Envs/Args
 
@@ -27,4 +27,13 @@ To check Possible run
 ```
 cargo run -- --help
 ```
+
+### Tests
+
+If you make some changes please run tests to verify everything still working as expected.
+
+```
+cargo test
+```
+
 
