@@ -20,3 +20,5 @@ pub struct Block {
     pub txs: Vec<Txid>,
     pub orphan: bool,
 }
+
+pub struct TxData {}

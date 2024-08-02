@@ -1,6 +1,6 @@
-use crate::types::{BlockHeight, BlockInfo};
+use crate::types::{BlockHeight, BlockInfo, TxData};
 use anyhow::{Ok, Result};
-use bitcoin::{Block, BlockHash};
+use bitcoin::{Block, BlockHash, Txid};
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use mockall::automock;
 use url::Url;
@@ -33,14 +33,38 @@ pub trait BitcoinClientApi {
 
     fn get_block_id_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
 
-    /// Get the block by id, along with id of the previous block hash
     fn get_block_by_id(&self, hash: &BlockHash) -> Result<Option<Block>>;
 
     fn get_blockchain_info(&self) -> Result<String>;
+
+    fn tx_exists(&mut self, tx_id: &Txid) -> Result<bool>;
+
+    fn get_tx(&mut self, tx_id: &Txid) -> Result<Option<TxData>>;
 }
 
 #[automock]
 impl BitcoinClientApi for BitcoinClient {
+    fn tx_exists(&mut self, tx_id: &Txid) -> Result<bool> {
+        let tx = self.client.get_raw_transaction_info(tx_id, None);
+        Ok(tx.is_ok())
+    }
+
+    fn get_tx(&mut self, tx_id: &Txid) -> Result<Option<TxData>> {
+        let tx = self.client.get_raw_transaction_info(tx_id, None);
+
+        if tx.is_err() {
+            return Ok(None);
+        }
+
+        let tx = tx.unwrap();
+
+        println!("Display tx {:?}", tx);
+
+        let tx_data = TxData {};
+
+        Ok(Some(tx_data))
+    }
+
     fn get_blockchain_info(&self) -> Result<String> {
         let network = self.client.get_blockchain_info()?.chain;
         Ok(network.to_string().to_uppercase())
