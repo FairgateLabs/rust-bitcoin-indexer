@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use bitcoin::{BlockHash, Txid};
 use mockall::predicate::eq;
@@ -148,30 +148,26 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
         .returning(move |_| Ok(()));
 
     let height_to_sync = 1000;
-    let mut indexer = Indexer {
-        height_to_sync,
-        bitcoin_client: Box::new(bitcoin_client),
-        store: Box::new(store),
+    let indexer = Indexer {
+        bitcoin_client: Arc::new(bitcoin_client),
+        store: Arc::new(store),
     };
 
-    // After initialize indexer should have height_to_sync in 1000
-    assert_eq!(indexer.height_to_sync, height_to_sync);
-
     // Firt iteration should detect block 1000 and increment height_to_sync to 1001
-    let _ = indexer.sync();
-    assert_eq!(indexer.height_to_sync, 1001);
+    let next_index = indexer.index_height(&height_to_sync)?;
+    assert_eq!(next_index, 1001);
 
     // Second iteration should detect block 1001 and increment height_to_sync to 1002
-    let _ = indexer.sync();
-    assert_eq!(indexer.height_to_sync, 1002);
+    let next_index = indexer.index_height(&next_index)?;
+    assert_eq!(next_index, 1002);
 
     // Third iteration should detect block 1002 and decrease height_to_sync to 1001
-    let _ = indexer.sync();
-    assert_eq!(indexer.height_to_sync, 1001);
+    let next_index = indexer.index_height(&next_index)?;
+    assert_eq!(next_index, 1001);
 
     // Fourth iteration should detect block 1002 and increase height_to_sync to 1002
-    let _ = indexer.sync();
-    assert_eq!(indexer.height_to_sync, 1002);
+    let next_index = indexer.index_height(&next_index)?;
+    assert_eq!(next_index, 1002);
 
     Ok(())
 }

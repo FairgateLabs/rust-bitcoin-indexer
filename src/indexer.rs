@@ -1,27 +1,34 @@
 use crate::{bitcoin_client::BitcoinClientApi, store::StoreClient, types::BlockHeight};
 use anyhow::Result;
+use bitcoin::Txid;
 use log::{error, info, warn};
-use std::{thread::sleep, time::Duration};
+use mockall::automock;
+use std::sync::Arc;
 pub struct Indexer {
-    pub height_to_sync: BlockHeight,
-    pub bitcoin_client: Box<dyn BitcoinClientApi>,
-    pub store: Box<dyn StoreClient>,
+    pub bitcoin_client: Arc<dyn BitcoinClientApi>,
+    pub store: Arc<dyn StoreClient>,
+}
+
+#[automock]
+pub trait IndexerApi {
+    fn get_best_block(&self) -> Result<Option<BlockHeight>>;
+    fn tx_exists(&self, tx_id: &Txid) -> Result<bool>;
+    fn get_tx(&self, tx_id: &Txid) -> Result<String>;
 }
 
 impl Indexer {
     pub fn new(
-        bitcoin_client: Box<dyn BitcoinClientApi>,
-        store: Box<dyn StoreClient>,
-        height_to_sync: BlockHeight,
+        bitcoin_indexer_client: Arc<dyn BitcoinClientApi>,
+        store: Arc<dyn StoreClient>,
     ) -> Result<Self> {
         Ok(Self {
-            height_to_sync,
-            bitcoin_client,
+            bitcoin_client: bitcoin_indexer_client,
             store,
         })
     }
 
-    pub fn sync(&mut self) -> Result<()> {
+    // After index blockchain given a height_to_index it returns the following index to index
+    pub fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg
@@ -30,52 +37,62 @@ impl Indexer {
         // Increment height_to_sync
         let blockchain_height = self.bitcoin_client.get_best_block()? as BlockHeight;
 
-        let block = self
-            .bitcoin_client
-            .get_block_by_height(self.height_to_sync)?;
+        let block = self.bitcoin_client.get_block_by_height(height_to_index)?;
 
         if block.is_none() {
-            //run a thread sleep for 2 minutes.
-            info!("Waiting for new block...");
-            sleep(Duration::from_secs(120));
-            return Ok(());
+            //Block does not exist in blockchain.
+            return Ok(0);
         }
 
         let block = block.unwrap();
-        let prev_height = self.height_to_sync.saturating_sub(1);
+        let prev_height = height_to_index.saturating_sub(1);
         let prev_block_hash = self.store.get_block_hash_by_height(prev_height)?;
 
         // Is Genesis block or a checkpoint block
-        if self.height_to_sync == 0
+        if *height_to_index == 0
             || prev_block_hash.is_none()
             || block.prev_hash == prev_block_hash.unwrap()
         {
             if prev_block_hash.is_none() {
                 warn!("Block height not found. Then could be a checkpoint block",);
-                // Then we don't need to check prev block because does not exist.
+                // We don't need to check prev block because does not exist.
             }
 
             info!(
                 "New block at height {}H/{}H",
-                self.height_to_sync, blockchain_height
+                height_to_index, blockchain_height
             );
 
             self.store.save_block(&block)?;
 
-            self.height_to_sync += 1;
-
-            return Ok(());
+            return Ok(height_to_index + 1);
         }
 
         // if current block prev_hash is different than the previous block hash, then we need to reorg
         error!(
             "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
-            self.height_to_sync,
+            height_to_index,
             prev_block_hash.unwrap()
         );
 
-        self.height_to_sync -= 1;
+        Ok(height_to_index - 1)
+    }
+}
 
-        Ok(())
+#[automock]
+impl IndexerApi for Indexer {
+    fn get_best_block(&self) -> Result<Option<BlockHeight>> {
+        let block = self.store.get_best_block_height()?;
+        Ok(block)
+    }
+
+    fn tx_exists(&self, tx_id: &Txid) -> Result<bool> {
+        let exist = self.store.tx_exists(tx_id)?;
+        Ok(exist)
+    }
+
+    fn get_tx(&self, tx_id: &Txid) -> Result<String> {
+        let tx = self.bitcoin_client.get_tx_hex(tx_id)?;
+        Ok(tx)
     }
 }

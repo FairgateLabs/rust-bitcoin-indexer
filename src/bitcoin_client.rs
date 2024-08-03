@@ -1,6 +1,7 @@
-use crate::types::{BlockHeight, BlockInfo, TxData};
+use crate::types::{BlockHeight, BlockInfo};
 use anyhow::{Ok, Result};
 use bitcoin::{Block, BlockHash, Txid};
+use bitcoincore_rpc::bitcoin::consensus::encode;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use mockall::automock;
 use url::Url;
@@ -29,40 +30,35 @@ impl BitcoinClient {
 pub trait BitcoinClientApi {
     fn get_best_block(&self) -> Result<BlockHeight>;
 
-    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<BlockInfo>>;
+    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>>;
 
-    fn get_block_id_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
+    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<Option<BlockHash>>;
 
     fn get_block_by_id(&self, hash: &BlockHash) -> Result<Option<Block>>;
 
     fn get_blockchain_info(&self) -> Result<String>;
 
-    fn tx_exists(&mut self, tx_id: &Txid) -> Result<bool>;
+    fn tx_exists(&self, tx_id: &Txid) -> Result<bool>;
 
-    fn get_tx(&mut self, tx_id: &Txid) -> Result<Option<TxData>>;
+    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String>;
 }
 
 #[automock]
 impl BitcoinClientApi for BitcoinClient {
-    fn tx_exists(&mut self, tx_id: &Txid) -> Result<bool> {
+    fn tx_exists(&self, tx_id: &Txid) -> Result<bool> {
         let tx = self.client.get_raw_transaction_info(tx_id, None);
         Ok(tx.is_ok())
     }
 
-    fn get_tx(&mut self, tx_id: &Txid) -> Result<Option<TxData>> {
-        let tx = self.client.get_raw_transaction_info(tx_id, None);
+    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String> {
+        let tx = self
+            .client
+            .get_raw_transaction(tx_id, None)
+            .expect("Transaction not found");
 
-        if tx.is_err() {
-            return Ok(None);
-        }
+        let hex = encode::serialize_hex(&tx);
 
-        let tx = tx.unwrap();
-
-        println!("Display tx {:?}", tx);
-
-        let tx_data = TxData {};
-
-        Ok(Some(tx_data))
+        Ok(hex)
     }
 
     fn get_blockchain_info(&self) -> Result<String> {
@@ -74,7 +70,7 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(self.client.get_block_count()? as u32)
     }
 
-    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<BlockInfo>> {
+    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>> {
         let block_hash = self.get_block_id_by_height(height)?;
 
         if block_hash.is_none() {
@@ -86,7 +82,7 @@ impl BitcoinClientApi for BitcoinClient {
 
         let block_info = BlockInfo {
             hash: block_hash,
-            height,
+            height: *height,
             prev_hash: block.header.prev_blockhash,
             txs: block.txdata.iter().map(|tx| tx.compute_txid()).collect(),
         };
@@ -94,8 +90,8 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(Some(block_info))
     }
 
-    fn get_block_id_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>> {
-        let block_hash = self.client.get_block_hash(u64::from(height));
+    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<Option<BlockHash>> {
+        let block_hash = self.client.get_block_hash(u64::from(*height));
 
         if block_hash.is_err() {
             return Ok(None);
@@ -124,17 +120,26 @@ mod test {
     #[test]
     #[ignore]
     fn get_data() -> Result<(), anyhow::Error> {
-        let connector = BitcoinClient::new("http://user:password@localhost:18443")?;
-        let count = connector.get_best_block()?;
-        let block = connector.get_block_id_by_height(2).unwrap();
+        let bitcoin_client = BitcoinClient::new("http://user:password@localhost:18443")?;
+        let count = bitcoin_client.get_best_block()?;
+        let block = bitcoin_client.get_block_id_by_height(&2).unwrap();
 
         println!("Display count {} ", count);
         println!("Display hash {:?} ", block);
-        const STR_HASH: &str = "12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d";
-        let block_hash = BlockHash::from_str(&STR_HASH)?;
+        let block_hash = BlockHash::from_str(
+            &"12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d",
+        )?;
 
-        let block = connector.get_block_by_id(&block_hash)?;
-        println!("Display block {:?} ", block);
+        let _block = bitcoin_client.get_block_by_id(&block_hash)?;
+        println!("Display block {:?} ", _block);
+
+        let tx_id =
+            Txid::from_str(&"0e099c2c53d69dc6f570f889a39ad918d7555f95492990a9e7d0392a68fbdbaf")
+                .unwrap();
+
+        let tx = bitcoin_client.get_tx_hex(&tx_id).unwrap();
+
+        println!("Display tx {:?}", tx);
         Ok(())
     }
 }

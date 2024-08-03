@@ -9,7 +9,7 @@ use rust_bitcoin_indexer::{
     store::{Store, StoreClient},
     types::BlockHeight,
 };
-use std::env;
+use std::{env, sync::Arc};
 
 fn main() -> Result<()> {
     dotenv::dotenv().context("There was an error loading .env file")?;
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
 
     let checkpoint_height: Option<u32> = get_checkpoint()?;
     let bitcoin_client = BitcoinClient::new(&node_rpc_url)?;
-    let mut store = Store::new(&db_file_path)?;
+    let store = Store::new(&db_file_path)?;
 
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
     let network = bitcoin_client.get_blockchain_info()?;
@@ -42,12 +42,12 @@ fn main() -> Result<()> {
         define_height_to_sync(checkpoint_height, blockchain_height, indexed_height)?;
     info!("Start synchronizing from {}H", height_to_sync);
 
-    let mut indexer = Indexer::new(Box::new(bitcoin_client), Box::new(store), height_to_sync)?;
+    let indexer = Indexer::new(Arc::new(bitcoin_client), Arc::new(store))?;
 
     loop {
-        let indexer = indexer.sync();
+        let next_index = indexer.index_height(&height_to_sync);
 
-        if let Err(err) = indexer {
+        if let Err(err) = next_index {
             error!("Error: {:?}", err);
             std::process::exit(1);
         }
