@@ -12,7 +12,7 @@ pub struct Indexer {
 #[automock]
 pub trait IndexerApi {
     fn get_best_block(&self) -> Result<Option<BlockHeight>>;
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool>;
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)>;
     fn get_tx(&self, tx_id: &Txid) -> Result<String>;
 }
 
@@ -40,8 +40,8 @@ impl Indexer {
         let block = self.bitcoin_client.get_block_by_height(height_to_index)?;
 
         if block.is_none() {
-            //Block does not exist in blockchain.
-            return Ok(0);
+            //Block does not exist in blockchain, then return same height.
+            return Ok(*height_to_index);
         }
 
         let block = block.unwrap();
@@ -86,9 +86,9 @@ impl IndexerApi for Indexer {
         Ok(block)
     }
 
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool> {
-        let exist = self.store.tx_exists(tx_id)?;
-        Ok(exist)
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)> {
+        let tx_exist_height: (bool, Option<u32>) = self.store.tx_exists(tx_id)?;
+        Ok(tx_exist_height)
     }
 
     fn get_tx(&self, tx_id: &Txid) -> Result<String> {

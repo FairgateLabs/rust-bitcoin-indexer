@@ -80,7 +80,7 @@ pub trait StoreClient {
 
     fn save_block(&self, block: &BlockInfo) -> Result<()>;
 
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool>;
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<BlockHeight>)>;
 }
 
 #[automock]
@@ -150,14 +150,19 @@ impl StoreClient for Store {
         Ok(block)
     }
 
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool> {
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<BlockHeight>)> {
         let blocks: Vec<Block> = self
             .get_data::<Block>("blocks")
             .context("There was an error trying to call tx_exists in Store")?;
 
-        let tx_exists = blocks.iter().any(|b| b.txs.contains(tx_id));
+        let block = blocks.into_iter().find(|b| b.txs.contains(tx_id));
 
-        Ok(tx_exists)
+        if block.is_none() {
+            return Ok((false, None));
+        }
+
+        let tx_height = block.unwrap().height;
+        Ok((true, Some(tx_height)))
     }
 }
 

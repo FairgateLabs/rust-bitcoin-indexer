@@ -1,6 +1,6 @@
 [package]
 name = "rust-bitcoin-indexer"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Bitcoin indexer"
 keywords = ["bitcoin", "indexer"]
