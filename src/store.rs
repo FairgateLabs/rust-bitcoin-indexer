@@ -22,6 +22,9 @@ pub struct Store {
 
 impl Store {
     pub fn new(file_path: &str) -> Result<Self> {
+        std::fs::create_dir_all(file_path)
+            .with_context(|| format!("Error creating the directory {}", file_path))?;
+
         Ok(Self {
             file_path: String::from(file_path),
         })
