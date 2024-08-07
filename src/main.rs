@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use clap::Parser;
-use log::{error, info, warn};
-use rust_bitcoin_indexer::{
+use bitcoin_indexer::{
     args::Args,
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
     helper::define_height_to_sync,
@@ -9,10 +7,27 @@ use rust_bitcoin_indexer::{
     store::{Store, StoreClient},
     types::BlockHeight,
 };
-use std::{env, sync::Arc};
+use clap::Parser;
+use log::{info, warn};
+use std::{
+    env,
+    sync::{mpsc::channel, Arc},
+    thread,
+    time::Duration,
+};
 
 fn main() -> Result<()> {
-    dotenv::dotenv().context("There was an error loading .env file")?;
+    let (tx, rx) = channel();
+
+    ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
+        .expect("Error setting Ctrl-C handler");
+
+    let envs = dotenv::dotenv();
+
+    if envs.is_err() {
+        warn!("No .env file found");
+    }
+
     env_logger::init();
 
     let args = Args::parse();
@@ -38,23 +53,36 @@ fn main() -> Result<()> {
     info!("Chain best block at {}H", blockchain_height);
 
     let indexed_height = store.get_best_block_height()?;
-    let height_to_sync =
+    let mut height_to_sync =
         define_height_to_sync(checkpoint_height, blockchain_height, indexed_height)?;
     info!("Start synchronizing from {}H", height_to_sync);
 
     let indexer = Indexer::new(Arc::new(bitcoin_client), Arc::new(store))?;
 
-    loop {
-        let next_index = indexer.index_height(&height_to_sync);
+    let mut prev_height = 0;
 
-        if let Err(err) = next_index {
-            error!("Error: {:?}", err);
-            std::process::exit(1);
+    loop {
+        if rx.try_recv().is_ok() {
+            info!("Stop Bitcoin Indexer");
+            break;
+        }
+
+        height_to_sync = indexer
+            .index_height(&height_to_sync)
+            .context("Indexing failed")?;
+
+        if prev_height == height_to_sync {
+            info!("Waitting for a new block...");
+            thread::sleep(Duration::from_secs(10));
+        } else {
+            prev_height = height_to_sync;
         }
     }
+
+    Ok(())
 }
 
-fn get_checkpoint() -> Result<Option<u32>, anyhow::Error> {
+fn get_checkpoint() -> Result<Option<u32>> {
     let checkpoint = env::var("CHECKPOINT_HEIGHT");
     let mut checkpoint_height = None;
 
