@@ -1,4 +1,4 @@
-use rust_bitcoin_indexer::helper::define_height_to_sync;
+use bitcoin_indexer::helper::define_height_to_sync;
 
 #[test]
 fn define_height_to_sync_test() -> Result<(), anyhow::Error> {

@@ -1,10 +1,10 @@
 use std::{str::FromStr, sync::Arc};
 
 use bitcoin::{BlockHash, Txid};
-use mockall::predicate::eq;
-use rust_bitcoin_indexer::{
+use bitcoin_indexer::{
     bitcoin_client::MockBitcoinClient, indexer::Indexer, store::MockStore, types::BlockInfo,
 };
+use mockall::predicate::eq;
 
 #[test]
 fn reorg_1_block() -> Result<(), anyhow::Error> {
