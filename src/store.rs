@@ -35,12 +35,15 @@ impl Store {
         let file_exists = Path::new(&full_path).exists();
 
         if !file_exists {
-            let _ = File::create(&full_path).context("Error creating file")?;
+            let _ = File::create(&full_path).with_context(|| {
+                format!("File path not found. Error creating the file {}", full_path)
+            })?;
             let empty_blocks = Vec::<T>::new();
             let _ = self.write_data(file_name, &empty_blocks);
         }
 
-        let mut file = File::open(&full_path).context("Error opening file")?;
+        let mut file =
+            File::open(&full_path).with_context(|| format!("Error opening file {}", full_path))?;
 
         let mut contents = String::new();
 
