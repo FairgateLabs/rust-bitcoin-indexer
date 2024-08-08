@@ -3,10 +3,9 @@ use anyhow::Result;
 use bitcoin::Txid;
 use log::{error, info, warn};
 use mockall::automock;
-use std::sync::Arc;
 pub struct Indexer {
-    pub bitcoin_client: Arc<dyn BitcoinClientApi>,
-    pub store: Arc<dyn StoreClient>,
+    pub bitcoin_client: Box<dyn BitcoinClientApi>,
+    pub store: Box<dyn StoreClient>,
 }
 
 #[automock]
@@ -14,21 +13,40 @@ pub trait IndexerApi {
     fn get_best_block(&self) -> Result<Option<BlockHeight>>;
     fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)>;
     fn get_tx(&self, tx_id: &Txid) -> Result<String>;
+    fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
 }
 
 impl Indexer {
     pub fn new(
-        bitcoin_indexer_client: Arc<dyn BitcoinClientApi>,
-        store: Arc<dyn StoreClient>,
+        bitcoin_indexer_client: Box<dyn BitcoinClientApi>,
+        store: Box<dyn StoreClient>,
     ) -> Result<Self> {
         Ok(Self {
             bitcoin_client: bitcoin_indexer_client,
             store,
         })
     }
+}
+
+#[automock]
+impl IndexerApi for Indexer {
+    fn get_best_block(&self) -> Result<Option<BlockHeight>> {
+        let block = self.store.get_best_block_height()?;
+        Ok(block)
+    }
+
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)> {
+        let tx_exist_height: (bool, Option<u32>) = self.store.tx_exists(tx_id)?;
+        Ok(tx_exist_height)
+    }
+
+    fn get_tx(&self, tx_id: &Txid) -> Result<String> {
+        let tx = self.bitcoin_client.get_tx_hex(tx_id)?;
+        Ok(tx)
+    }
 
     // After index blockchain given a height_to_index it returns the following index to index
-    pub fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
+    fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg
@@ -76,23 +94,5 @@ impl Indexer {
         );
 
         Ok(height_to_index - 1)
-    }
-}
-
-#[automock]
-impl IndexerApi for Indexer {
-    fn get_best_block(&self) -> Result<Option<BlockHeight>> {
-        let block = self.store.get_best_block_height()?;
-        Ok(block)
-    }
-
-    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)> {
-        let tx_exist_height: (bool, Option<u32>) = self.store.tx_exists(tx_id)?;
-        Ok(tx_exist_height)
-    }
-
-    fn get_tx(&self, tx_id: &Txid) -> Result<String> {
-        let tx = self.bitcoin_client.get_tx_hex(tx_id)?;
-        Ok(tx)
     }
 }

@@ -1,8 +1,11 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 use bitcoin::{BlockHash, Txid};
 use bitcoin_indexer::{
-    bitcoin_client::MockBitcoinClient, indexer::Indexer, store::MockStore, types::BlockInfo,
+    bitcoin_client::MockBitcoinClient,
+    indexer::{Indexer, IndexerApi},
+    store::MockStore,
+    types::BlockInfo,
 };
 use mockall::predicate::eq;
 
@@ -148,10 +151,7 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
         .returning(move |_| Ok(()));
 
     let height_to_sync = 1000;
-    let indexer = Indexer {
-        bitcoin_client: Arc::new(bitcoin_client),
-        store: Arc::new(store),
-    };
+    let indexer = Indexer::new(Box::new(bitcoin_client), Box::new(store))?;
 
     // Firt iteration should detect block 1000 and increment height_to_sync to 1001
     let next_index = indexer.index_height(&height_to_sync)?;
