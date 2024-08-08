@@ -3,9 +3,13 @@ use anyhow::Result;
 use bitcoin::Txid;
 use log::{error, info, warn};
 use mockall::automock;
-pub struct Indexer {
-    pub bitcoin_client: Box<dyn BitcoinClientApi>,
-    pub store: Box<dyn StoreClient>,
+pub struct Indexer<B, S>
+where
+    B: BitcoinClientApi,
+    S: StoreClient,
+{
+    pub bitcoin_client: B,
+    pub store: S,
 }
 
 #[automock]
@@ -16,11 +20,12 @@ pub trait IndexerApi {
     fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
 }
 
-impl Indexer {
-    pub fn new(
-        bitcoin_indexer_client: Box<dyn BitcoinClientApi>,
-        store: Box<dyn StoreClient>,
-    ) -> Result<Self> {
+impl<B, S> Indexer<B, S>
+where
+    B: BitcoinClientApi,
+    S: StoreClient,
+{
+    pub fn new(bitcoin_indexer_client: B, store: S) -> Result<Self> {
         Ok(Self {
             bitcoin_client: bitcoin_indexer_client,
             store,
@@ -29,7 +34,11 @@ impl Indexer {
 }
 
 #[automock]
-impl IndexerApi for Indexer {
+impl<B, S> IndexerApi for Indexer<B, S>
+where
+    B: BitcoinClientApi,
+    S: StoreClient,
+{
     fn get_best_block(&self) -> Result<Option<BlockHeight>> {
         let block = self.store.get_best_block_height()?;
         Ok(block)
