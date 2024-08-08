@@ -5,6 +5,7 @@ use anyhow::Context;
 use anyhow::Ok;
 use anyhow::Result;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::Txid;
 use mockall::automock;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -21,12 +22,15 @@ pub struct Store {
 
 impl Store {
     pub fn new(file_path: &str) -> Result<Self> {
+        std::fs::create_dir_all(file_path)
+            .with_context(|| format!("Error creating the directory {}", file_path))?;
+
         Ok(Self {
             file_path: String::from(file_path),
         })
     }
 
-    pub fn get_data<T>(&mut self, file_name: &str) -> Result<Vec<T>>
+    pub fn get_data<T>(&self, file_name: &str) -> Result<Vec<T>>
     where
         T: DeserializeOwned + Serialize,
     {
@@ -34,12 +38,15 @@ impl Store {
         let file_exists = Path::new(&full_path).exists();
 
         if !file_exists {
-            let _ = File::create(&full_path).context("Error creating file")?;
+            let _ = File::create(&full_path).with_context(|| {
+                format!("File path not found. Error creating the file {}", full_path)
+            })?;
             let empty_blocks = Vec::<T>::new();
             let _ = self.write_data(file_name, &empty_blocks);
         }
 
-        let mut file = File::open(&full_path).context("Error opening file")?;
+        let mut file =
+            File::open(&full_path).with_context(|| format!("Error opening file {}", full_path))?;
 
         let mut contents = String::new();
 
@@ -49,7 +56,7 @@ impl Store {
         Ok(data)
     }
 
-    fn write_data<T>(&mut self, file_name: &str, data: &Vec<T>) -> Result<()>
+    fn write_data<T>(&self, file_name: &str, data: &Vec<T>) -> Result<()>
     where
         T: Serialize,
     {
@@ -70,19 +77,21 @@ impl Store {
 }
 
 pub trait StoreClient {
-    fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>>;
+    fn get_best_block_height(&self) -> Result<Option<BlockHeight>>;
 
-    fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>>;
+    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
 
     /// Get the block by id, along with id of the previous block hash
-    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<Block>>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>>;
 
-    fn save_block(&mut self, block: &BlockInfo) -> Result<()>;
+    fn save_block(&self, block: &BlockInfo) -> Result<()>;
+
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<BlockHeight>)>;
 }
 
 #[automock]
 impl StoreClient for Store {
-    fn save_block(&mut self, block: &BlockInfo) -> Result<()> {
+    fn save_block(&self, block: &BlockInfo) -> Result<()> {
         let mut blocks: Vec<Block> = self.get_data::<Block>("blocks")?;
 
         let new_block = Block {
@@ -112,7 +121,7 @@ impl StoreClient for Store {
         Ok(())
     }
 
-    fn get_best_block_height(&mut self) -> Result<Option<BlockHeight>> {
+    fn get_best_block_height(&self) -> Result<Option<BlockHeight>> {
         let blocks: Vec<Block> = self
             .get_data::<Block>("blocks")
             .context("There was an error trying to call get_best_block_height in Store")?;
@@ -127,7 +136,7 @@ impl StoreClient for Store {
         Ok(last_height_block)
     }
 
-    fn get_block_hash_by_height(&mut self, height: BlockHeight) -> Result<Option<BlockHash>> {
+    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>> {
         let blocks: Vec<Block> = self
             .get_data::<Block>("blocks")
             .context("There was an error trying to call get_block_hash_by_height in Store")?;
@@ -138,13 +147,28 @@ impl StoreClient for Store {
         Ok(block)
     }
 
-    fn get_block_by_hash(&mut self, hash: &BlockHash) -> Result<Option<Block>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>> {
         let blocks: Vec<Block> = self
             .get_data::<Block>("blocks")
             .context("There was an error trying to call get_block_by_hash in Store")?;
         let block = blocks.into_iter().find(|b| b.hash == *hash && !b.orphan);
 
         Ok(block)
+    }
+
+    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<BlockHeight>)> {
+        let blocks: Vec<Block> = self
+            .get_data::<Block>("blocks")
+            .context("There was an error trying to call tx_exists in Store")?;
+
+        let block = blocks.into_iter().find(|b| b.txs.contains(tx_id));
+
+        if block.is_none() {
+            return Ok((false, None));
+        }
+
+        let tx_height = block.unwrap().height;
+        Ok((true, Some(tx_height)))
     }
 }
 
@@ -157,7 +181,7 @@ mod test {
     #[test]
     #[ignore]
     fn get_data() -> Result<(), anyhow::Error> {
-        let mut store = Store::new("data")?;
+        let store = Store::new("data")?;
         let height = store.get_best_block_height()?;
         println!("best block {:?}", height);
 
