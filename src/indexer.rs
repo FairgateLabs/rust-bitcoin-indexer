@@ -64,6 +64,18 @@ where
         // Increment height_to_sync
         let blockchain_height = self.bitcoin_client.get_best_block()? as BlockHeight;
 
+        if blockchain_height < *height_to_index {
+            // If the current blockchain height is lower than height_to_sync and
+            // the block to be indexed is beyond the range of blocks already indexed,
+            // return the same height for indexing.
+            return Ok(*height_to_index);
+        }
+
+        info!(
+            "Indexing block at height {}H/{}H",
+            height_to_index, blockchain_height
+        );
+
         let block = self.bitcoin_client.get_block_by_height(height_to_index)?;
 
         if block.is_none() {
@@ -96,7 +108,7 @@ where
         }
 
         // if current block prev_hash is different than the previous block hash, then we need to reorg
-        error!(
+        warn!(
             "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
             height_to_index,
             prev_block_hash.unwrap()

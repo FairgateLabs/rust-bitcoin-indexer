@@ -34,7 +34,7 @@ pub trait BitcoinClientApi {
 
     fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<Option<BlockHash>>;
 
-    fn get_block_by_id(&self, hash: &BlockHash) -> Result<Option<Block>>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>>;
 
     fn get_blockchain_info(&self) -> Result<String>;
 
@@ -67,7 +67,8 @@ impl BitcoinClientApi for BitcoinClient {
     }
 
     fn get_best_block(&self) -> Result<BlockHeight> {
-        Ok(self.client.get_block_count()? as u32)
+        let block_height = self.client.get_block_count();
+        Ok(block_height? as u32)
     }
 
     fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>> {
@@ -78,7 +79,7 @@ impl BitcoinClientApi for BitcoinClient {
         }
 
         let block_hash = block_hash.unwrap();
-        let block = self.get_block_by_id(&block_hash)?.unwrap();
+        let block = self.get_block_by_hash(&block_hash)?.unwrap();
 
         let block_info = BlockInfo {
             hash: block_hash,
@@ -100,7 +101,7 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(Some(block_hash.unwrap()))
     }
 
-    fn get_block_by_id(&self, hash: &BlockHash) -> Result<Option<Block>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>> {
         let block = self.client.get_by_id(hash);
 
         if block.is_err() {
@@ -130,8 +131,7 @@ mod test {
             &"12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d",
         )?;
 
-        let _block = bitcoin_client.get_block_by_id(&block_hash)?;
-        println!("Display block {:?} ", _block);
+        let _block = bitcoin_client.get_block_by_hash(&block_hash)?;
 
         let tx_id =
             Txid::from_str(&"0e099c2c53d69dc6f570f889a39ad918d7555f95492990a9e7d0392a68fbdbaf")
