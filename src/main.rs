@@ -42,9 +42,8 @@ fn main() -> Result<()> {
     let store = Store::new(&db_file_path)?;
 
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
-    let network = bitcoin_client.get_blockchain_info()?;
-
-    info!("Connected to chain {}", network);
+    // let network = bitcoin_client.get_blockchain_info()?;
+    // info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
 
     let indexed_height = store.get_best_block_height()?;
