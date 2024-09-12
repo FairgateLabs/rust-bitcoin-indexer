@@ -1,7 +1,7 @@
 use crate::{bitcoin_client::BitcoinClientApi, store::StoreClient, types::BlockHeight};
 use anyhow::Result;
 use bitcoin::Txid;
-use log::{error, info, warn};
+use log::{info, warn};
 use mockall::automock;
 pub struct Indexer<B, S>
 where

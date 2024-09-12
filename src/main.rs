@@ -32,20 +32,20 @@ fn main() -> Result<()> {
         .or_else(|| env::var("DB_FILE_PATH").ok())
         .context("No Bitcoin database file path provided")?;
 
-    let node_rpc_url: String = args
-        .node_rpc_url
-        .or_else(|| env::var("NODE_RPC_URL").ok())
+    let rpc_url: String = args
+        .rpc_url
+        .or_else(|| env::var("RPC_URL").ok())
         .context("No Bitcoin rpc url provided")?;
 
     let checkpoint_height: Option<u32> = get_checkpoint()?;
-    let bitcoin_client = BitcoinClient::new(&node_rpc_url)?;
-    let store = Store::new(&db_file_path)?;
-
+    let bitcoin_client = BitcoinClient::new(&rpc_url)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
-    // let network = bitcoin_client.get_blockchain_info()?;
-    // info!("Connected to chain {}", network);
+
+    let network = bitcoin_client.get_blockchain_info()?;
+    info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
 
+    let store = Store::new(&db_file_path)?;
     let indexed_height = store.get_best_block_height()?;
     let mut height_to_sync =
         define_height_to_sync(checkpoint_height, blockchain_height, indexed_height)?;
@@ -77,7 +77,8 @@ fn main() -> Result<()> {
 }
 
 fn get_checkpoint() -> Result<Option<u32>> {
-    let checkpoint = env::var("CHECKPOINT_HEIGHT");
+    let checkpoint = env::var("CHECKPOINT_HEIGHT_BLOCK");
+    info!("Checkpoint {:?}", checkpoint);
     let mut checkpoint_height = None;
 
     if checkpoint.is_ok() {
