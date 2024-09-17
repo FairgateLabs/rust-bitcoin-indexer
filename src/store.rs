@@ -41,7 +41,7 @@ impl StoreClient for Store {
             txs: block.txs.clone(),
             orphan: false,
         };
-        self.db.set(block_key, &new_block)?;
+        self.db.set(block_key, new_block)?;
 
         // 2. Save the block hash by its height.
         let height_key = format!("block/height/{}", block.height);
