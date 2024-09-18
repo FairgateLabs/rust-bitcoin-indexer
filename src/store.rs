@@ -16,7 +16,7 @@ pub struct Store {
 
 impl Store {
     pub fn new(file_path: &str) -> Result<Self> {
-        let db = Storage::new_with_path(&PathBuf::from(file_path))?;
+        let db = Storage::new_with_path(&PathBuf::from(format!("{}/indexer", file_path)))?;
         Ok(Self { db })
     }
 }
