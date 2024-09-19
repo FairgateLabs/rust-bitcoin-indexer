@@ -1,7 +1,11 @@
-use crate::{bitcoin_client::BitcoinClientApi, store::StoreClient, types::BlockHeight};
+use crate::{
+    bitcoin_client::{BitcoinClient, BitcoinClientApi},
+    store::{Store, StoreClient},
+    types::BlockHeight,
+};
 use anyhow::Result;
 use bitcoin::Txid;
-use log::{error, info, warn};
+use log::{info, warn};
 use mockall::automock;
 pub struct Indexer<B, S>
 where
@@ -28,6 +32,16 @@ where
     pub fn new(bitcoin_indexer_client: B, store: S) -> Result<Self> {
         Ok(Self {
             bitcoin_client: bitcoin_indexer_client,
+            store,
+        })
+    }
+}
+
+impl Indexer<BitcoinClient, Store> {
+    pub fn new_with_path(bitcoin_client: BitcoinClient, store_path: &str) -> Result<Self> {
+        let store = Store::new(store_path)?;
+        Ok(Self {
+            bitcoin_client,
             store,
         })
     }

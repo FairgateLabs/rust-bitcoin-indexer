@@ -13,6 +13,20 @@ The Bitcoin Indexer is a Rust-based tool designed to extract and store block and
 
 ![Explanation](draw.png)
 
+## Installation
+Clone the repository and initialize the submodules:
+```bash
+$ git clone --recurse-submodules git@github.com:FairgateLabs/rust-bitcoin-indexer
+```
+
+OR manually initialize the submodules (if you already cloned the repo without the `--recurse-submodules` option):
+ 
+```bash
+$ git clone git@github.com:FairgateLabs/rust-bitcoin-indexer
+$ git submodule init
+$ git submodule update --remote --checkout
+```
+
 ### Setup `.env` File
 
 To set up the Bitcoin Indexer, you need to create a **.env** file. You can use the **.env.example** file as a reference.

@@ -10,9 +10,9 @@ pub struct Args {
 
     /// Bitcoin node rpc url
     #[arg(long, short = 'n')]
-    pub node_rpc_url: Option<String>,
+    pub rpc_url: Option<String>,
 
     /// Bitcoin height to start indexing from
     #[arg(long, short = 'c')]
-    pub checkpoint_height: Option<u32>,
+    pub checkpoint_height_block: Option<u32>,
 }
