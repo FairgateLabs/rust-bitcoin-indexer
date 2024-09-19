@@ -6,10 +6,9 @@ use anyhow::Result;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Txid;
 use mockall::automock;
-use rust_bitvmx_storage_backend::storage::KeyValueStore;
-use rust_bitvmx_storage_backend::storage::Storage;
 use std::path::PathBuf;
-
+use storage_backend::storage::KeyValueStore;
+use storage_backend::storage::Storage;
 pub struct Store {
     db: Storage,
 }
