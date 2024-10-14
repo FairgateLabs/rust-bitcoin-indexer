@@ -171,3 +171,204 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+#[test]
+fn sequential_block_extraction() -> Result<(), anyhow::Error> {
+    let mut bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    let txid = Txid::from_str("91c1acedb27109016bb3a177372cdbb5f8f9d9c32fd4c2506ebb564ac0a61eaf").unwrap();
+
+    let block_info_1000 = BlockInfo {
+        height: 1000,
+        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d")?,
+        prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000")?,
+        txs: vec![txid.clone()],
+    };
+
+    let block_info_1001 = BlockInfo {
+        height: 1001,
+        hash: BlockHash::from_str("e987bd2b973073b86b83901b03f6d16711452ab634cd8b2f3915e22cdcfa39b2")?,
+        prev_hash: block_info_1000.hash,
+        txs: vec![txid.clone()],
+    };
+
+    let block_info_1002 = BlockInfo {
+        height: 1002,
+        hash: BlockHash::from_str("3c4389fd5a12aa686b546bf5ab2168e6149e21a6a20fcf9272ebc541bd2eed67")?,
+        prev_hash: block_info_1001.hash,
+        txs: vec![txid],
+    };
+
+    let block_info_1000_clone = block_info_1000.clone();
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1000))
+        .returning(move |_| Ok(Some(block_info_1000.clone())));  
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1001))
+        .returning(move |_| Ok(Some(block_info_1001.clone())));
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1002))
+        .returning(move |_| Ok(Some(block_info_1002.clone())));
+
+    let block_info_1000_clone_prev_hash = block_info_1000_clone.clone();  
+    store
+        .expect_get_block_hash_by_height()
+        .with(eq(999))
+        .returning(move |_| Ok(Some(block_info_1000_clone_prev_hash.prev_hash)));
+
+    store
+        .expect_save_block()
+        .times(3)
+        .returning(move |_| Ok(()));
+
+    bitcoin_client
+        .expect_get_best_block()
+        .returning(|| Ok(1000));
+
+    let indexer = Indexer::new(bitcoin_client, store)?;
+    let mut height = 1000;
+
+    height = indexer.index_height(&height)?;
+    assert_eq!(height, 1001);
+
+    height = indexer.index_height(&height)?;
+    assert_eq!(height, 1002);
+
+    Ok(())
+}
+
+#[test]
+fn block_info_extraction_validation() -> Result<(), anyhow::Error> {
+    let mut bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    bitcoin_client
+        .expect_get_best_block()
+        .returning(move || Ok(1000)); 
+
+    let txid = Txid::from_str("91c1acedb27109016bb3a177372cdbb5f8f9d9c32fd4c2506ebb564ac0a61eaf")
+        .unwrap();
+
+    let block_info = BlockInfo {
+        height: 1000,
+        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d")?,
+        prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000")?,
+        txs: vec![txid.clone()],  
+    };
+
+    let block_info_clone = block_info.clone();  
+    let block_info_prev_clone = block_info.clone();  
+
+    // Mock para el bloque 999
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(999))
+        .returning(move |_| Ok(None));  // o algún bloque si es necesario
+
+    // Mock para el bloque 1000
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1000))
+        .returning(move |_| Ok(Some(block_info_clone.clone())));  
+
+    store
+        .expect_get_block_hash_by_height()
+        .with(eq(999))
+        .returning(move |_| Ok(Some(block_info_prev_clone.prev_hash)));  
+
+    store
+        .expect_save_block()
+        .with(eq(block_info.clone()))
+        .returning(move |_| Ok(()));  
+
+    // Run the indexer for block 1000
+    let indexer = Indexer::new(bitcoin_client, store)?;
+    let height = indexer.index_height(&999)?;
+
+    assert_eq!(height, 1000);
+    assert_eq!(block_info.hash, BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d")?);
+    assert_eq!(block_info.prev_hash, BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000")?);
+    assert_eq!(block_info.height, 1000);
+    assert_eq!(block_info.txs.len(), 1);
+    assert_eq!(block_info.txs[0], txid);
+
+    Ok(())
+}
+
+
+#[test]
+fn simulate_blockchain_with_gaps() -> Result<(), anyhow::Error> {
+    let mut bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    bitcoin_client
+        .expect_get_best_block()
+        .returning(move || Ok(1000));  
+
+    let txid = Txid::from_str("91c1acedb27109016bb3a177372cdbb5f8f9d9c32fd4c2506ebb564ac0a61eaf")
+        .unwrap();
+
+    // Simulate block 1000, then skip to block 1002 (gap at 1001)
+    let block_info_1000 = BlockInfo {
+        height: 1000,
+        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d")?,
+        prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000")?,
+        txs: vec![txid.clone()],
+    };
+
+    let block_info_1002 = BlockInfo {
+        height: 1002,
+        hash: BlockHash::from_str("3c4389fd5a12aa686b546bf5ab2168e6149e21a6a20fcf9272ebc541bd2eed67")?,
+        prev_hash: block_info_1000.hash.clone(),
+        txs: vec![txid.clone()],
+    };
+
+    let block_info_1000_clone = block_info_1000.clone();
+    let block_info_1002_clone = block_info_1002.clone();
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1000))
+        .returning(move |_| Ok(Some(block_info_1000_clone.clone())));
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1001))
+        .returning(move |_| Ok(None));  // Simulate missing block at 1001
+
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(1002))
+        .returning(move |_| Ok(Some(block_info_1002_clone.clone())));
+
+    store
+        .expect_get_block_hash_by_height()
+        .with(eq(999))
+        .returning(move |_| Ok(Some(block_info_1000.prev_hash.clone())));
+
+    store
+        .expect_save_block()
+        .with(eq(block_info_1000.clone()))
+        .returning(move |_| Ok(()));
+    store
+        .expect_save_block()
+        .with(eq(block_info_1002.clone()))
+        .returning(move |_| Ok(()));
+
+    // Run the indexer
+    let indexer = Indexer::new(bitcoin_client, store)?;
+    let mut height = 1000;
+
+    // Should skip 1001 and go to 1002
+    height = indexer.index_height(&height)?;
+    assert_eq!(height, 1002);
+
+    Ok(())
+}
