@@ -20,3 +20,11 @@ pub struct Block {
     pub txs: Vec<Txid>,
     pub orphan: bool,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct TransactionInfo {
+    pub tx_id: Txid,
+    pub block_height: BlockHeight,
+    pub block_hash: BlockHash,
+    pub orphan: bool,
+}

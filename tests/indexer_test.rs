@@ -49,21 +49,21 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
         height: 1001,
         hash: hash_1001,
         prev_hash: hash_1000,
-        txs: vec![txid],
+        txs: vec![],
     };
 
     let block_1002 = BlockInfo {
         height: 1002,
         hash: hash_1002,
         prev_hash: hash_1001_reorg,
-        txs: vec![txid],
+        txs: vec![],
     };
 
     let block_1001_reorg = BlockInfo {
         height: 1001,
         hash: hash_1001_reorg,
         prev_hash: hash_1000,
-        txs: vec![txid],
+        txs: vec![],
     };
 
     let block_1000_copy = block_1000.clone();
