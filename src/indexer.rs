@@ -1,7 +1,7 @@
 use crate::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
     store::{Store, StoreClient},
-    types::BlockHeight,
+    types::{BlockHeight, TransactionInfo},
 };
 use anyhow::Result;
 use bitcoin::Txid;
@@ -19,7 +19,7 @@ where
 #[automock]
 pub trait IndexerApi {
     fn get_best_block(&self) -> Result<Option<BlockHeight>>;
-    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)>;
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
     fn get_tx(&self, tx_id: &Txid) -> Result<String>;
     fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
 }
@@ -58,8 +58,8 @@ where
         Ok(block)
     }
 
-    fn tx_exists(&self, tx_id: &Txid) -> Result<(bool, Option<u32>)> {
-        let tx_exist_height: (bool, Option<u32>) = self.store.tx_exists(tx_id)?;
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
+        let tx_exist_height = self.store.get_tx_info(tx_id)?;
         Ok(tx_exist_height)
     }
 
