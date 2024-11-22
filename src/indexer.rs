@@ -18,10 +18,10 @@ where
 
 #[automock]
 pub trait IndexerApi {
+    // This method indexes the block height received as a parameter
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
     fn get_best_block(&self) -> Result<Option<BlockHeight>>;
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
-    fn get_tx(&self, tx_id: &Txid) -> Result<String>;
-    fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
 }
 
 impl<B, S> Indexer<B, S>
@@ -58,18 +58,13 @@ where
         Ok(block)
     }
 
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
         let tx_exist_height = self.store.get_tx_info(tx_id)?;
         Ok(tx_exist_height)
     }
 
-    fn get_tx(&self, tx_id: &Txid) -> Result<String> {
-        let tx = self.bitcoin_client.get_tx_hex(tx_id)?;
-        Ok(tx)
-    }
-
     // After index blockchain given a height_to_index it returns the following index to index
-    fn index_height(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg

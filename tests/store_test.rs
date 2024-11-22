@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use bitcoin::{key::rand, BlockHash, Txid};
+use bitcoin::{absolute::LockTime, key::rand, transaction::Version, BlockHash, Transaction};
 use bitcoin_indexer::{
     store::{Store, StoreClient},
     types::BlockInfo,
@@ -149,16 +149,21 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
         BlockHash::from_str("0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7b")
             .unwrap();
 
-    let tx_id =
-        Txid::from_str("91c1acedb27109016bb3a177372cdbb5f8f9d9c32fd4c2506ebb564ac0a61eaf").unwrap();
+    let tx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: vec![],
+    };
+
+    let tx_id = tx.compute_txid();
 
     let block_1 = BlockInfo {
         height: 1,
         hash: block_hash_1,
         prev_hash: block_hash_2,
-        txs: vec![tx_id],
+        txs: vec![tx.clone()],
     };
-
     //1) Save block_1 and check get_tx_info method, transaction with tx_id should exist
     store.save_block(&block_1)?;
     let tx_info = store.get_tx_info(&tx_id)?.unwrap();
@@ -182,7 +187,9 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     //2) Insert new_block_1 and check get_tx_info, transaction should be orphan.
     //A block with the same height was inserted, it means that there was an reorganization and transaction was moved to meempool.
     // Then transaction was not mined. But we keep in our database that the transaction was seen.
+
     store.save_block(&new_block_1)?;
+
     let tx_info = store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx_id, tx_id);
     assert_eq!(tx_info.block_height, block_1.height);
@@ -198,7 +205,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
         height: 1,
         hash: block_hash_1,
         prev_hash: block_hash_2,
-        txs: vec![tx_id],
+        txs: vec![tx],
     };
 
     //3) Insert new_block_1_again and check get_tx_info, transaction tx_id should exist again an not be orphan anymore. It was included in a new block at same height

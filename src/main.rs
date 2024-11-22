@@ -61,9 +61,7 @@ fn main() -> Result<()> {
             break;
         }
 
-        height_to_sync = indexer
-            .index_height(&height_to_sync)
-            .context("Indexing failed")?;
+        height_to_sync = indexer.tick(&height_to_sync).context("Indexing failed")?;
 
         if prev_height == height_to_sync {
             info!("Waitting for a new block...");
