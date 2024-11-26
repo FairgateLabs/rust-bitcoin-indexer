@@ -24,7 +24,6 @@ pub struct BlockStore {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TransactionInfo {
-    pub tx_id: Txid,
     pub tx: Transaction,
     pub block_height: BlockHeight,
     pub block_hash: BlockHash,

@@ -167,7 +167,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     //1) Save block_1 and check get_tx_info method, transaction with tx_id should exist
     store.save_block(&block_1)?;
     let tx_info = store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx_id, tx_id);
+    assert_eq!(tx_info.tx.compute_txid(), tx_id);
     assert_eq!(tx_info.block_height, block_1.height);
     assert_eq!(tx_info.orphan, false);
     assert_eq!(tx_info.block_hash, block_1.hash);
@@ -191,7 +191,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     store.save_block(&new_block_1)?;
 
     let tx_info = store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx_id, tx_id);
+    assert_eq!(tx_info.tx.compute_txid(), tx_id);
     assert_eq!(tx_info.block_height, block_1.height);
     assert_eq!(tx_info.orphan, true);
     assert_eq!(tx_info.block_hash, block_1.hash);
@@ -211,7 +211,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     //3) Insert new_block_1_again and check get_tx_info, transaction tx_id should exist again an not be orphan anymore. It was included in a new block at same height
     store.save_block(&new_block_1_again)?;
     let tx_info = store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx_id, tx_id);
+    assert_eq!(tx_info.tx.compute_txid(), tx_id);
     assert_eq!(tx_info.block_height, new_block_1_again.height);
     assert_eq!(tx_info.orphan, false);
     assert_eq!(tx_info.block_hash, new_block_1_again.hash);

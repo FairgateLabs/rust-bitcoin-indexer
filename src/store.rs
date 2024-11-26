@@ -133,7 +133,6 @@ impl StoreClient for Store {
             let block = self.get_block_by_hash(&block_hash)?.unwrap();
 
             let tx = TransactionInfo {
-                tx_id: *tx_id,
                 tx,
                 block_height: block.height,
                 block_hash,
