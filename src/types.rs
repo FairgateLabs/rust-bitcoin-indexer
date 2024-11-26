@@ -14,7 +14,7 @@ pub struct BlockInfo {
     pub txs: Vec<Transaction>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct BlockStore {
+pub struct FullBlock {
     pub height: BlockHeight,
     pub hash: BlockHash,
     pub prev_hash: BlockHash,

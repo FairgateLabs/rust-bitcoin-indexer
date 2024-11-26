@@ -1,6 +1,6 @@
 use crate::types::BlockHeight;
 use crate::types::BlockInfo;
-use crate::types::BlockStore;
+use crate::types::FullBlock;
 use crate::types::TransactionInfo;
 use anyhow::Ok;
 use anyhow::Result;
@@ -44,7 +44,7 @@ impl Store {
 pub trait StoreClient {
     fn get_best_block_height(&self) -> Result<Option<BlockHeight>>;
     fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<BlockStore>>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>>;
     fn save_block(&self, block: &BlockInfo) -> Result<()>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
 }
@@ -66,7 +66,7 @@ impl StoreClient for Store {
         }
 
         //Create new entry for the new block
-        let new_block = BlockStore {
+        let new_block = FullBlock {
             height: block.height,
             hash: block.hash,
             prev_hash: block.prev_hash,
@@ -118,9 +118,9 @@ impl StoreClient for Store {
     }
 
     // Retrieve the block by its hash.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<BlockStore>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>> {
         let key = self.get_key(StoreKey::BlockByHash(*hash));
-        let block: Option<BlockStore> = self.db.get(key)?;
+        let block: Option<FullBlock> = self.db.get(key)?;
         Ok(block)
     }
 
