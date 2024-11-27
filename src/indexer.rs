@@ -4,7 +4,7 @@ use crate::{
     types::{BlockHeight, FullBlock, TransactionInfo},
 };
 use anyhow::Result;
-use bitcoin::{BlockHash, Txid};
+use bitcoin::Txid;
 use log::{info, warn};
 use mockall::automock;
 pub struct Indexer<B, S>
@@ -20,9 +20,8 @@ where
 pub trait IndexerApi {
     // This method indexes the block height received as a parameter
     fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
-    fn get_best_block(&self) -> Result<Option<BlockHeight>>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>>;
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>>;
 }
 
 impl<B, S> Indexer<B, S>
@@ -54,8 +53,8 @@ where
     B: BitcoinClientApi,
     S: StoreClient,
 {
-    fn get_best_block(&self) -> Result<Option<BlockHeight>> {
-        let block = self.store.get_best_block_height()?;
+    fn get_best_block(&self) -> Result<Option<FullBlock>> {
+        let block = self.store.get_best_block()?;
         Ok(block)
     }
 
@@ -124,9 +123,5 @@ where
         );
 
         Ok(height_to_index - 1)
-    }
-
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>> {
-        self.store.get_block_by_hash(hash)
     }
 }

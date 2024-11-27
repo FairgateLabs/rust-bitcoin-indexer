@@ -42,7 +42,7 @@ impl Store {
 }
 
 pub trait StoreClient {
-    fn get_best_block_height(&self) -> Result<Option<BlockHeight>>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>>;
     fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>>;
     fn save_block(&self, block: &BlockInfo) -> Result<()>;
@@ -104,10 +104,17 @@ impl StoreClient for Store {
     }
 
     // Retrieve the height of the best block.
-    fn get_best_block_height(&self) -> Result<Option<BlockHeight>> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>> {
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key)?;
-        Ok(best_block_height)
+
+        if let Some(height) = best_block_height {
+            let block_hash = self.get_block_hash_by_height(height)?.unwrap();
+            let block = self.get_block_by_hash(&block_hash)?.unwrap();
+            Ok(Some(block))
+        } else {
+            Ok(None)
+        }
     }
 
     // Retrieve the block hash by height.

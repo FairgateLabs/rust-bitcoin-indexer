@@ -3,7 +3,7 @@ use std::str::FromStr;
 use bitcoin::{absolute::LockTime, key::rand, transaction::Version, BlockHash, Transaction};
 use bitcoin_indexer::{
     store::{Store, StoreClient},
-    types::BlockInfo,
+    types::{BlockInfo, FullBlock},
 };
 
 fn generate_random_string() -> String {
@@ -13,14 +13,14 @@ fn generate_random_string() -> String {
 }
 
 #[test]
-fn get_best_block_height_test() -> Result<(), anyhow::Error> {
+fn get_best_block_test() -> Result<(), anyhow::Error> {
     //This is not a test, is just a way to call methods easily.
     let path = format!(
         "test_output/get_best_block_height_test/{}",
         generate_random_string()
     );
     let store = Store::new(&path)?;
-    let height = store.get_best_block_height()?;
+    let height = store.get_best_block()?;
     assert_eq!(height, None);
 
     let block_1 = BlockInfo {
@@ -30,40 +30,56 @@ fn get_best_block_height_test() -> Result<(), anyhow::Error> {
         )
         .unwrap(),
         prev_hash: BlockHash::from_str(
-            "0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7f",
+            "0000000000000000000a1e2b6f1f3b7f0a1f1e2b6f1f3b7f0a1f1e2b6f1f3b7f",
         )
         .unwrap(),
         txs: vec![],
     };
 
-    //Insert block at height 1 and check get_best_block_height
+    let expected_block = FullBlock {
+        height: block_1.height,
+        hash: block_1.hash,
+        prev_hash: block_1.prev_hash,
+        txs: block_1.txs.clone(),
+        orphan: false,
+    };
+
+    //Insert block at height 1 and check best block
     store.save_block(&block_1)?;
-    let height = store.get_best_block_height()?;
-    assert_eq!(height, Some(1));
+    let best_block = store.get_best_block()?;
+    assert_eq!(best_block, Some(expected_block));
 
     let block_2 = BlockInfo {
         height: 2,
         hash: BlockHash::from_str(
-            "0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7f",
+            "0000000000000000000c1e2b6f1f3b7f0c1f1e2b6f1f3b7f0c1f1e2b6f1f3b7f",
         )
         .unwrap(),
         prev_hash: BlockHash::from_str(
-            "0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7f",
+            "0000000000000000000c1e2b6f1f3b7f0c1f1e2b6f1f3b7f0c1f1e2b6f1f3b7f",
         )
         .unwrap(),
         txs: vec![],
     };
 
-    //Insert block at height 2 and check get_best_block_height
+    //Insert block at height 2 and check best block
     store.save_block(&block_2)?;
-    let height = store.get_best_block_height()?;
-    assert_eq!(height, Some(2));
+    let best_block = store.get_best_block()?;
 
-    //Insert block at height 1 again and check get_best_block_height
+    let expected_block_2 = FullBlock {
+        height: block_2.height,
+        hash: block_2.hash,
+        prev_hash: block_2.prev_hash,
+        txs: block_2.txs.clone(),
+        orphan: false,
+    };
 
+    assert_eq!(best_block, Some(expected_block_2.clone()));
+
+    //Insert block at height 1 again and check best block
     store.save_block(&block_1)?;
-    let height = store.get_best_block_height()?;
-    assert_eq!(height, Some(2));
+    let block_again = store.get_best_block()?;
+    assert_eq!(block_again, Some(expected_block_2));
 
     Ok(())
 }
