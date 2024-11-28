@@ -85,7 +85,7 @@ impl BitcoinClientApi for BitcoinClient {
             hash: block_hash,
             height: *height,
             prev_hash: block.header.prev_blockhash,
-            txs: block.txdata.iter().map(|tx| tx.compute_txid()).collect(),
+            txs: block.txdata,
         };
 
         Ok(Some(block_info))

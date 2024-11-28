@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use bitcoin::{BlockHash, Txid};
+use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction};
 use bitcoin_indexer::{
     bitcoin_client::MockBitcoinClient,
     indexer::{Indexer, IndexerApi},
@@ -14,8 +14,12 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
     let mut bitcoin_client = MockBitcoinClient::new();
     let mut store = MockStore::new();
 
-    let txid = Txid::from_str(&"91c1acedb27109016bb3a177372cdbb5f8f9d9c32fd4c2506ebb564ac0a61eaf")
-        .unwrap();
+    let tx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: vec![],
+    };
 
     // Reorg 1 block, block_1002 prev hash is different than block_1001 hash
     // Then get again block_1001 and this is different, check that block_1001 prev hash is correct
@@ -42,7 +46,7 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
         height: 1000,
         hash: hash_1000,
         prev_hash: prev_hash_1000,
-        txs: vec![txid],
+        txs: vec![tx],
     };
 
     let block_1001 = BlockInfo {
@@ -154,19 +158,19 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
     let indexer = Indexer::new(bitcoin_client, store)?;
 
     // Firt iteration should detect block 1000 and increment height_to_sync to 1001
-    let next_index = indexer.index_height(&height_to_sync)?;
+    let next_index = indexer.tick(&height_to_sync)?;
     assert_eq!(next_index, 1001);
 
     // Second iteration should detect block 1001 and increment height_to_sync to 1002
-    let next_index = indexer.index_height(&next_index)?;
+    let next_index = indexer.tick(&next_index)?;
     assert_eq!(next_index, 1002);
 
     // Third iteration should detect block 1002 and decrease height_to_sync to 1001
-    let next_index = indexer.index_height(&next_index)?;
+    let next_index = indexer.tick(&next_index)?;
     assert_eq!(next_index, 1001);
 
     // Fourth iteration should detect block 1002 and increase height_to_sync to 1002
-    let next_index = indexer.index_height(&next_index)?;
+    let next_index = indexer.tick(&next_index)?;
     assert_eq!(next_index, 1002);
 
     Ok(())

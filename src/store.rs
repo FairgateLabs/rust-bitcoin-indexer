@@ -1,10 +1,11 @@
-use crate::types::Block;
 use crate::types::BlockHeight;
 use crate::types::BlockInfo;
+use crate::types::FullBlock;
 use crate::types::TransactionInfo;
 use anyhow::Ok;
 use anyhow::Result;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::Transaction;
 use bitcoin::Txid;
 use mockall::automock;
 use std::path::PathBuf;
@@ -41,9 +42,9 @@ impl Store {
 }
 
 pub trait StoreClient {
-    fn get_best_block_height(&self) -> Result<Option<BlockHeight>>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>>;
     fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>>;
     fn save_block(&self, block: &BlockInfo) -> Result<()>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
 }
@@ -65,7 +66,7 @@ impl StoreClient for Store {
         }
 
         //Create new entry for the new block
-        let new_block = Block {
+        let new_block = FullBlock {
             height: block.height,
             hash: block.hash,
             prev_hash: block.prev_hash,
@@ -84,12 +85,12 @@ impl StoreClient for Store {
         self.db.set(height_key, block.hash)?;
 
         // 3. Save block hash under each transaction ID (this is to know if tx exists).
-        for tx_id in &block.txs {
-            let tx_key = self.get_key(StoreKey::TransactionById(*tx_id));
-            self.db.set(tx_key, block.hash)?;
+        for tx in &block.txs {
+            let tx_key = self.get_key(StoreKey::TransactionById(tx.compute_txid()));
+            self.db.set(tx_key, (tx, block.hash))?;
         }
 
-        // 4. Save transactions by block hash.
+        // 4. Save transactions IDs by block hash.
         let txs_key = self.get_key(StoreKey::BlockTxsByHash(block.hash));
         self.db.set(txs_key, &block.txs)?;
 
@@ -99,15 +100,21 @@ impl StoreClient for Store {
         if best_block_height.is_none() || best_block_height.unwrap() < block.height {
             self.db.set(key, block.height)?;
         }
-
         Ok(())
     }
 
     // Retrieve the height of the best block.
-    fn get_best_block_height(&self) -> Result<Option<BlockHeight>> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>> {
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key)?;
-        Ok(best_block_height)
+
+        if let Some(height) = best_block_height {
+            let block_hash = self.get_block_hash_by_height(height)?.unwrap();
+            let block = self.get_block_by_hash(&block_hash)?.unwrap();
+            Ok(Some(block))
+        } else {
+            Ok(None)
+        }
     }
 
     // Retrieve the block hash by height.
@@ -118,24 +125,24 @@ impl StoreClient for Store {
     }
 
     // Retrieve the block by its hash.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>> {
         let key = self.get_key(StoreKey::BlockByHash(*hash));
-        let block: Option<Block> = self.db.get(key)?;
+        let block: Option<FullBlock> = self.db.get(key)?;
         Ok(block)
     }
 
     // Check if a transaction exists and return its block height if found.
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
-        let tx_info = self.db.get::<&str, BlockHash>(&key)?;
+        let tx_data = self.db.get::<&str, (Transaction, BlockHash)>(&key)?;
 
-        if let Some(block_info) = tx_info {
-            let block = self.get_block_by_hash(&block_info)?.unwrap();
+        if let Some((tx, block_hash)) = tx_data {
+            let block = self.get_block_by_hash(&block_hash)?.unwrap();
 
             let tx = TransactionInfo {
-                tx_id: *tx_id,
+                tx,
                 block_height: block.height,
-                block_hash: block_info,
+                block_hash,
                 orphan: block.orphan,
             };
             Ok(Some(tx))
