@@ -144,6 +144,7 @@ impl StoreClient for Store {
                 block_height: block.height,
                 block_hash,
                 orphan: block.orphan,
+                confirmations: 0,
             };
             Ok(Some(tx))
         } else {
