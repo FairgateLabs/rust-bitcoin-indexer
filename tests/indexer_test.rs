@@ -321,19 +321,14 @@ fn test_index_height_empty_blockchain() {
     let indexer = Indexer::new(bitcoin_client, store).unwrap();
     let result = indexer.tick(&1);
 
-    assert!(result.is_err(), "Se esperaba un error al indexar en un blockchain vacío");
+    assert!(result.is_err(), "Error expected while trying to index in an empty blockchain");
 }
 
 #[test]
 fn test_index_height_reorg_detected() {
     let mut bitcoin_client = MockBitcoinClient::new();
     let mut store_client = MockStore::new();
-    /*
-    let txid1 = 
-        Txid::from_str("09a1ac4fb35a72d8d018bbcab24d2e8325b12e9ecc133bfec5bdf1a1af669a9a").unwrap();
-    let txid2 = 
-        Txid::from_str("18ae1634a1573b4ad1778d7cbbacad447ad1db4c48ebf49f44bc8c24d43d0132").unwrap();
-    */
+
     let hash_100 = 
         BlockHash::from_str("57f5177941ed0bbabbda3265e65b84ddd1dea400504f20692d22f7a818f7b9a0").unwrap();
     
@@ -439,7 +434,7 @@ fn test_index_height_invalid_block() -> Result<(), Box<dyn std::error::Error>> {
         let indexer = Indexer::new(bitcoin_client, store).unwrap();
         let result = indexer.tick(&103);
 
-    assert!(result.is_err(), "Se esperaba un error al procesar un bloque inválido");
+    assert!(result.is_err(), "Expected error while processing an invalid block");
     Ok(())
 }
 
