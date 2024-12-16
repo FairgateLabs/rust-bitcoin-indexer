@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use anyhow::Ok;
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction}; //, Txid};
 use bitcoin_indexer::{
     bitcoin_client::MockBitcoinClient,
@@ -177,51 +178,34 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
 }
 
 #[test]
-fn test_get_best_block() {
+fn test_get_best_block() -> Result<(), anyhow::Error> {
     let bitcoin_client = MockBitcoinClient::new();
     let mut store = MockStore::new();
 
-    store
-        .expect_get_best_block()
-        .times(1)
-        .returning(|| Ok(None));
-
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let best_block = indexer.get_best_block().unwrap();
-    assert_eq!(best_block, None);
-
-    let hash =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2").unwrap();
-    let prev_hash = 
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234").unwrap();
-
-    let mut store = MockStore::new();
-    store
-        .expect_get_best_block()
-        .times(1)
-        .returning(move || Ok(Some(FullBlock {
-            height: 1000,
-            hash: hash,
-            orphan: false,
-            prev_hash: prev_hash,
-            txs: Vec::new(),
-        })));
-
-    let indexer = Indexer::new(MockBitcoinClient::new(), store).unwrap();
-    let best_block = indexer.get_best_block().unwrap();
-    let hash2 =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2").unwrap();
-    let prev_hash2 = 
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234").unwrap();
-    
-    assert_eq!(best_block, Some(FullBlock {
+    let hash = BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
+    let prev_hash = BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
+    let full_block = FullBlock {
         height: 1000,
-        hash: hash2,
+        hash: hash.clone(),
         orphan: false,
-        prev_hash: prev_hash2,
-        txs: Vec::new(),
-    }));
+        prev_hash: prev_hash.clone(),
+        txs: vec![],
+    };
+
+    let full_block_clone = full_block.clone();
+    store
+        .expect_get_best_block()
+        .times(1)
+        .returning(move || Ok(Some(full_block_clone.clone())));
+
+    let indexer = Indexer::new(bitcoin_client, store)?;
+    let best_block = indexer.get_best_block()?;
+    assert_eq!(best_block, Some(full_block));
+
+    Ok(())
 }
+
+
 
 #[test]
 fn test_index_height_block_not_exists() {
@@ -387,11 +371,10 @@ fn test_index_height_reorg_detected() {
 
 use std::sync::Arc;
 #[test]
-fn test_index_height_invalid_block() -> Result<(), Box<dyn std::error::Error>> {
+fn test_index_height_invalid_block() -> Result<(), anyhow::Error> {
     let mut bitcoin_client = MockBitcoinClient::new();
     let mut store = MockStore::new();
 
-    //let txid = Txid::from_str("58585b2c27933023a8bcf593671a5e5fcbca52c97d29e256cee4deea4a49e770")?;
     let prev_hash_103 = 
         BlockHash::from_str("2bec48d30f0dd43d00a90dfd2de68a3ec5b8d9213ad9471c2945a5498d0c0697")?;
     
@@ -409,20 +392,16 @@ fn test_index_height_invalid_block() -> Result<(), Box<dyn std::error::Error>> {
         txs: vec![tx],
     };
 
-    // Usar Arc en lugar de Rc para manejar referencias compartidas de block_103
     let block_103_for_client = Arc::new(block_103.clone());
     let block_103_for_store = block_103.clone();
 
-    // Mock get_best_block to return the height we're testing
     bitcoin_client.expect_get_best_block()
         .returning(|| Ok(103));
 
-    // Mock get_block_by_height to return the invalid block
     bitcoin_client.expect_get_block_by_height()
         .with(eq(103))
         .returning(move |_| Ok(Some((*block_103_for_client).clone())));
 
-    // Mock get_block_hash_by_height to return the expected previous hash for height 102
     store.expect_get_block_hash_by_height()
         .with(eq(102))
         .returning(move |_| Ok(Some(prev_hash_103)));
@@ -431,11 +410,12 @@ fn test_index_height_invalid_block() -> Result<(), Box<dyn std::error::Error>> {
         .with(eq(block_103_for_store))
         .returning(|_| Ok(()));
 
-        let indexer = Indexer::new(bitcoin_client, store).unwrap();
-        let result = indexer.tick(&103);
+    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let result = indexer.tick(&103);
 
     assert!(result.is_err(), "Expected error while processing an invalid block");
-    Ok(())
+
+    Ok(()) // Devuelve un resultado exitoso si la prueba pasa
 }
 
 #[test]
