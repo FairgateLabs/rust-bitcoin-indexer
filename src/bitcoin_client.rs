@@ -1,5 +1,5 @@
+use crate::errors::BitcoinClientError;
 use crate::types::{BlockHeight, BlockInfo};
-use anyhow::{Ok, Result};
 use bitcoin::{Block, BlockHash, Txid};
 use bitcoincore_rpc::bitcoin::consensus::encode;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -12,7 +12,7 @@ pub struct BitcoinClient {
 }
 
 impl BitcoinClient {
-    pub fn new(url_str: &str) -> Result<Self> {
+    pub fn new(url_str: &str) -> Result<Self, BitcoinClientError> {
         let url = Url::parse(url_str)?;
 
         let auth = match url.password() {
@@ -28,58 +28,59 @@ impl BitcoinClient {
 
 #[automock]
 pub trait BitcoinClientApi {
-    fn get_best_block(&self) -> Result<BlockHeight>;
+    fn get_best_block(&self) -> Result<BlockHeight, BitcoinClientError>;
 
-    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>>;
+    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>, BitcoinClientError>;
 
-    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<Option<BlockHash>>;
+    fn get_block_id_by_height(&self, height: &BlockHeight) -> Option<BlockHash>;
 
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Option<Block>;
 
-    fn get_blockchain_info(&self) -> Result<String>;
+    fn get_blockchain_info(&self) -> Result<String, BitcoinClientError>;
 
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool>;
+    fn tx_exists(&self, tx_id: &Txid) -> bool;
 
-    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String>;
+    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String, BitcoinClientError>;
 }
 
 #[automock]
 impl BitcoinClientApi for BitcoinClient {
-    fn tx_exists(&self, tx_id: &Txid) -> Result<bool> {
+    fn tx_exists(&self, tx_id: &Txid) -> bool {
         let tx = self.client.get_raw_transaction_info(tx_id, None);
-        Ok(tx.is_ok())
+        tx.is_ok()
     }
 
-    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String> {
+    fn get_tx_hex(&self, tx_id: &Txid) -> Result<String, BitcoinClientError> {
         let tx = self
             .client
-            .get_raw_transaction(tx_id, None)
-            .expect("Transaction not found");
+            .get_raw_transaction(tx_id, None)?;
 
         let hex = encode::serialize_hex(&tx);
 
         Ok(hex)
     }
 
-    fn get_blockchain_info(&self) -> Result<String> {
+    fn get_blockchain_info(&self) -> Result<String, BitcoinClientError> {
         let network = self.client.get_blockchain_info()?.chain;
         Ok(network.to_string().to_uppercase())
     }
 
-    fn get_best_block(&self) -> Result<BlockHeight> {
-        let block_height = self.client.get_block_count();
-        Ok(block_height? as u32)
+    fn get_best_block(&self) -> Result<BlockHeight, BitcoinClientError> {
+        let block_height = self.client.get_block_count()?;
+        Ok(block_height as u32)
     }
 
-    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>> {
-        let block_hash = self.get_block_id_by_height(height)?;
+    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>, BitcoinClientError> {
+        
+        let block_hash = match self.get_block_id_by_height(&height) {
+            Some(hash) => hash,
+            None => return Ok(None),
+        };
 
-        if block_hash.is_none() {
-            return Ok(None);
-        }
-
-        let block_hash = block_hash.unwrap();
-        let block = self.get_block_by_hash(&block_hash)?.unwrap();
+        let block = match self.get_block_by_hash(&block_hash){
+            Some(block) => block,
+            None => return Ok(None),
+        };
 
         let block_info = BlockInfo {
             hash: block_hash,
@@ -91,24 +92,24 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(Some(block_info))
     }
 
-    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<Option<BlockHash>> {
+    fn get_block_id_by_height(&self, height: &BlockHeight) -> Option<BlockHash> {
         let block_hash = self.client.get_block_hash(u64::from(*height));
 
-        if block_hash.is_err() {
-            return Ok(None);
+        match block_hash {
+            Ok(hash) => Some(hash),
+            Err(_) => None,
+            
         }
-
-        Ok(Some(block_hash.unwrap()))
     }
 
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<Block>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Option<Block> {
         let block = self.client.get_by_id(hash);
 
-        if block.is_err() {
-            return Ok(None);
+        match block {
+            Ok(hash) => Some(hash),
+            Err(_) => None,
+            
         }
-
-        Ok(Some(block.unwrap()))
     }
 }
 
@@ -131,7 +132,7 @@ mod test {
             &"12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d",
         )?;
 
-        let _block = bitcoin_client.get_block_by_hash(&block_hash)?;
+        let _block = bitcoin_client.get_block_by_hash(&block_hash);
 
         let tx_id =
             Txid::from_str(&"0e099c2c53d69dc6f570f889a39ad918d7555f95492990a9e7d0392a68fbdbaf")

@@ -1,9 +1,6 @@
 use crate::{
-    bitcoin_client::{BitcoinClient, BitcoinClientApi},
-    store::{Store, StoreClient},
-    types::{BlockHeight, FullBlock, TransactionInfo},
+    bitcoin_client::{BitcoinClient, BitcoinClientApi}, errors::IndexerError, store::{Store, StoreClient}, types::{BlockHeight, FullBlock, TransactionInfo}
 };
-use anyhow::Result;
 use bitcoin::Txid;
 use log::{info, warn};
 use mockall::automock;
@@ -19,9 +16,9 @@ where
 #[automock]
 pub trait IndexerApi {
     // This method indexes the block height received as a parameter
-    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
-    fn get_best_block(&self) -> Result<Option<FullBlock>>;
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
+    fn tick(&mut self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
 }
 
 impl<B, S> Indexer<B, S>
@@ -29,16 +26,16 @@ where
     B: BitcoinClientApi,
     S: StoreClient,
 {
-    pub fn new(bitcoin_indexer_client: B, store: S) -> Result<Self> {
-        Ok(Self {
+    pub fn new(bitcoin_indexer_client: B, store: S) -> Self {
+        Self {
             bitcoin_client: bitcoin_indexer_client,
             store,
-        })
+        }
     }
 }
 
 impl Indexer<BitcoinClient, Store> {
-    pub fn new_with_path(bitcoin_client: BitcoinClient, store_path: &str) -> Result<Self> {
+    pub fn new_with_path(bitcoin_client: BitcoinClient, store_path: &str) -> Result<Self, IndexerError> {
         let store = Store::new(store_path)?;
         Ok(Self {
             bitcoin_client,
@@ -53,12 +50,12 @@ where
     B: BitcoinClientApi,
     S: StoreClient,
 {
-    fn get_best_block(&self) -> Result<Option<FullBlock>> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_best_block()?;
         Ok(block)
     }
 
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
         let tx_info = self.store.get_tx_info(tx_id)?;
 
         if let Some(mut tx_info) = tx_info {
@@ -76,7 +73,7 @@ where
     }
 
     // After index blockchain given a height_to_index it returns the following index to index
-    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
+    fn tick(&mut self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg
