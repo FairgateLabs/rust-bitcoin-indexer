@@ -155,7 +155,7 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
         .returning(move |_| Ok(()));
 
     let height_to_sync = 1000;
-    let mut indexer = Indexer::new(bitcoin_client, store);
+    let indexer = Indexer::new(bitcoin_client, store);
 
     // Firt iteration should detect block 1000 and increment height_to_sync to 1001
     let next_index = indexer.tick(&height_to_sync)?;

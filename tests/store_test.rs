@@ -19,7 +19,7 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
         "test_output/get_best_block_height_test/{}",
         generate_random_string()
     );
-    let mut store = Store::new(&path)?;
+    let store = Store::new(&path)?;
     let height = store.get_best_block()?;
     assert_eq!(height, None);
 
@@ -88,7 +88,7 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
 fn save_block_test() -> Result<(), anyhow::Error> {
     //This is not a test, is just a way to call methods easily.
     let path = format!("test_output/save_block_test/{}", generate_random_string());
-    let mut store = Store::new(&path)?;
+    let store = Store::new(&path)?;
 
     let block_hash_1 =
         BlockHash::from_str("0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7a")
@@ -155,7 +155,7 @@ fn save_block_test() -> Result<(), anyhow::Error> {
 #[test]
 fn get_tx_info_test() -> Result<(), anyhow::Error> {
     let path = format!("test_output/get_tx_info_test/{}", generate_random_string());
-    let mut store = Store::new(&path)?;
+    let store = Store::new(&path)?;
 
     let block_hash_1 =
         BlockHash::from_str("0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7a")

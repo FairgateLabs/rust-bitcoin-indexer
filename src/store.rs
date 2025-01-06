@@ -44,13 +44,13 @@ pub trait StoreClient {
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError>;
     fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>, IndexerStoreError>;
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn save_block(&mut self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
+    fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
 }
 
 #[automock]
 impl StoreClient for Store {
-    fn save_block(&mut self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
+    fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
 
         match existing_block_at_height {

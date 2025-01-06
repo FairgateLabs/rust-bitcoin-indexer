@@ -16,7 +16,7 @@ where
 #[automock]
 pub trait IndexerApi {
     // This method indexes the block height received as a parameter
-    fn tick(&mut self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError>;
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError>;
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
 }
@@ -73,7 +73,7 @@ where
     }
 
     // After index blockchain given a height_to_index it returns the following index to index
-    fn tick(&mut self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError> {
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg
