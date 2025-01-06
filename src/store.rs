@@ -53,16 +53,24 @@ impl StoreClient for Store {
     fn save_block(&mut self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
 
-        if existing_block_at_height.is_some() {
-            // update block as an orphan.
-            let block_hash = existing_block_at_height.unwrap();
-            let mut block = self.get_block_by_hash(&block_hash)?.unwrap();
-            block.orphan = true;
+        match existing_block_at_height {
+            Some(block_hash) => {
+                // update block as an orphan.
+                let mut block = match self.get_block_by_hash(&block_hash)? {
+                    Some(block) => block,
+                    None => return Err(IndexerStoreError::BlockNotFound),
+                };
 
-            // save block
-            let key = self.get_key(StoreKey::BlockByHash(block.hash));
-            self.db.set(key, block, None)?;
+                block.orphan = true;
+
+                // save block
+                let key = self.get_key(StoreKey::BlockByHash(block.hash));
+                self.db.set(key, block, None)?;
+            },
+            None => {},
         }
+            
+        
 
         //Create new entry for the new block
         let new_block = FullBlock {
@@ -96,7 +104,7 @@ impl StoreClient for Store {
         // 5. Update the best block height if this is the latest block.
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key.clone())?;
-        if best_block_height.is_none() || best_block_height.unwrap() < block.height {
+        if best_block_height.is_none() || best_block_height < Some(block.height) {
             self.db.set(key, block.height, None)?;
         }
         Ok(())
@@ -108,9 +116,15 @@ impl StoreClient for Store {
         let best_block_height: Option<BlockHeight> = self.db.get(key)?;
 
         if let Some(height) = best_block_height {
-            let block_hash = self.get_block_hash_by_height(height)?.unwrap();
-            let block = self.get_block_by_hash(&block_hash)?.unwrap();
-            Ok(Some(block))
+            match self.get_block_hash_by_height(height)?{ 
+                Some(block_hash) => {
+                    match self.get_block_by_hash(&block_hash)? {
+                        Some(block) => Ok(Some(block)),
+                        None => Err(IndexerStoreError::BlockNotFound),
+                    }
+                }
+                None => Err(IndexerStoreError::BlockNotFound),
+            }
         } else {
             Ok(None)
         }
@@ -136,7 +150,10 @@ impl StoreClient for Store {
         let tx_data = self.db.get::<&str, (Transaction, BlockHash)>(&key)?;
 
         if let Some((tx, block_hash)) = tx_data {
-            let block = self.get_block_by_hash(&block_hash)?.unwrap();
+            let block = match self.get_block_by_hash(&block_hash)? {
+                Some(block) => block,
+                None => return Err(IndexerStoreError::BlockNotFound),
+            };
 
             let tx = TransactionInfo {
                 tx,

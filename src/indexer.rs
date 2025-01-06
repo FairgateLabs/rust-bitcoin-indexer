@@ -96,19 +96,21 @@ where
 
         let block = self.bitcoin_client.get_block_by_height(height_to_index)?;
 
-        if block.is_none() {
-            //Block does not exist in blockchain, then return same height.
-            return Ok(*height_to_index);
-        }
+        let block = match block {
+            Some(block) => block,
+            None => {
+                //Block does not exist in blockchain, then return same height.
+                return Ok(*height_to_index);
+            },
+        };
 
-        let block = block.unwrap();
         let prev_height = height_to_index.saturating_sub(1);
         let prev_block_hash = self.store.get_block_hash_by_height(prev_height)?;
 
         // Is Genesis block or a checkpoint block
         if *height_to_index == 0
             || prev_block_hash.is_none()
-            || block.prev_hash == prev_block_hash.unwrap()
+            || Some(block.prev_hash) == prev_block_hash
         {
             if prev_block_hash.is_none() {
                 warn!("Block height not found. Then could be a checkpoint block",);
@@ -129,7 +131,7 @@ where
         warn!(
             "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
             height_to_index,
-            prev_block_hash.unwrap()
+            prev_block_hash
         );
 
         Ok(height_to_index - 1)

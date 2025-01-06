@@ -10,12 +10,18 @@ pub enum BitcoinClientError {
 
     #[error("Error creating client")]
     ClientError(#[from] bitcoincore_rpc::Error),
+
+    #[error("Error getting blockchain info")] //find a good name for this error
+    BlockchainInfoError(bitcoincore_rpc::Error),
 }
 
 #[derive(Error, Debug)]
 pub enum IndexerStoreError {
     #[error("Error with Store client")]
     StoreError(#[from] storage_backend::error::StorageError),
+
+    #[error("Block not found")]
+    BlockNotFound,
 }
 
 #[derive(Error, Debug)]
