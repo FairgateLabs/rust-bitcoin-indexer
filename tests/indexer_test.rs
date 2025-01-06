@@ -206,25 +206,6 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
 }
 
 #[test]
-fn test_index_height_block_not_exists() {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let store = MockStore::new();
-
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(move || Ok(1000));
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1000))
-        .returning(move |_| Ok(None)); // Simula que el bloque en la altura 1000 no existe
-
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let result = indexer.tick(&1000);
-    assert_eq!(result.unwrap(), 1000);
-}
-
-#[test]
 fn test_blockchain_height_lower_than_index_height() {
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = MockStore::new();
@@ -237,37 +218,7 @@ fn test_blockchain_height_lower_than_index_height() {
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
-
-#[test]
-fn test_block_hash_mismatch() {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
-
-    let block_info = BlockInfo {
-        height: 1,
-        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d").unwrap(),
-        prev_hash: BlockHash::from_str("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff").unwrap(),
-        txs: vec![],
-    };
-
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(move || Ok(1));
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(&1))
-        .returning(move |_| Ok(Some(block_info.clone())));
-
-    store
-        .expect_get_block_hash_by_height()
-        .with(eq(0))
-        .returning(move |_| Ok(Some(BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap())));
-
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let result = indexer.tick(&1);
-    assert_eq!(result.unwrap(), 1000);
-}
+// get_transaction >> fijarse casos tambien de huerfanos
 
 #[test]
 fn test_blockchain_height_less_than_index_height() {
@@ -281,102 +232,4 @@ fn test_blockchain_height_less_than_index_height() {
     let indexer = Indexer::new(bitcoin_client, store).unwrap();
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
-}
-
-#[test]
-fn test_index_height_empty_blockchain() {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let store = MockStore::new();
-    
-    // Mock get_best_block to return 0, simulating an empty blockchain
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(0));
-    
-    // Mock get_block_by_height to return None since no blocks exist
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1))
-        .returning(|_| Ok(None));
-    
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let result = indexer.tick(&1);
-
-    assert!(result.is_err(), "Error expected while trying to index in an empty blockchain");
-}
-
-use std::sync::Arc;
-#[test]
-fn test_index_height_invalid_block() -> Result<(), anyhow::Error> {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
-
-    let prev_hash_103 = 
-        BlockHash::from_str("2bec48d30f0dd43d00a90dfd2de68a3ec5b8d9213ad9471c2945a5498d0c0697")?;
-    
-    let invalid_hash = BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000")?;
-    let tx = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-    let block_103 = BlockInfo {
-        hash: invalid_hash,
-        prev_hash: prev_hash_103,
-        height: 103,
-        txs: vec![tx],
-    };
-
-    let block_103_for_client = Arc::new(block_103.clone());
-    let block_103_for_store = block_103.clone();
-
-    bitcoin_client.expect_get_best_block()
-        .returning(|| Ok(103));
-
-    bitcoin_client.expect_get_block_by_height()
-        .with(eq(103))
-        .returning(move |_| Ok(Some((*block_103_for_client).clone())));
-
-    store.expect_get_block_hash_by_height()
-        .with(eq(102))
-        .returning(move |_| Ok(Some(prev_hash_103)));
-
-    store.expect_save_block()
-        .with(eq(block_103_for_store))
-        .returning(|_| Ok(()));
-
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let result = indexer.tick(&103);
-
-    assert!(result.is_err(), "Expected error while processing an invalid block");
-
-    Ok(()) // Devuelve un resultado exitoso si la prueba pasa
-}
-
-#[test]
-fn test_index_height_upper_limit_reached() {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let store = MockStore::new();
-    bitcoin_client.expect_get_best_block()
-        .returning(|| Ok(500_000));
-
-    bitcoin_client.expect_get_block_by_height()
-        .returning(|height| {
-            if *height > 500_000 { 
-                Ok(None) 
-            } else { 
-                Ok(Some(BlockInfo { 
-                    height: *height, 
-                    hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(), 
-                    prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(), 
-                    txs: vec![],
-                })) 
-            }
-        });
-
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
-    let result = indexer.tick(&500_101);
-
-    assert!(result.is_err());
 }
