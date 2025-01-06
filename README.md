@@ -2,37 +2,23 @@
 
 ## Overview
 
-The Bitcoin Indexer is a Rust-based tool designed to extract and store block and transaction IDs from the Bitcoin blockchain. This project aims to provide a simple and efficient way to index the blockchain starting from a specific height and save the gathered data into a file for further analysis and processing.
+The Bitcoin Indexer is a Rust-based tool designed to extract and store block and transaction IDs from the Bitcoin blockchain. This project aims to provide a simple and efficient way to index the blockchain starting from a specific height and save the gathered data into a rockdb storage for further analysis and processing.
 
 ## Key Features
 
 - **Block and Transaction ID Extraction**: Retrieves and records block and transaction IDs from the Bitcoin blockchain.
 - **Configurable Start Height**: Allows indexing to begin from a specified block height.
-- **File Storage**: Saves the extracted data into a file for easy access and further use.
-
-
-![Explanation](draw.png)
+- **File Storage**: Saves the extracted data into a rockdb storage for easy access and further use.
 
 ## Installation
 Clone the repository and initialize the submodules:
 ```bash
-$ git clone --recurse-submodules git@github.com:FairgateLabs/rust-bitcoin-indexer
-```
-
-OR manually initialize the submodules (if you already cloned the repo without the `--recurse-submodules` option):
- 
-```bash
 $ git clone git@github.com:FairgateLabs/rust-bitcoin-indexer
-$ git submodule init
-$ git submodule update --remote --checkout
 ```
 
 ### Setup `.env` File
 
 To set up the Bitcoin Indexer, you need to create a **.env** file. You can use the **.env.example** file as a reference.
-
-### Bitcoin Indexed Data
-Blocks and transaction data will be saved in the `blocks.json` file in the folder you defined in the **DB_FILE_PATH** env.  
 
 ### Envs/Args
 

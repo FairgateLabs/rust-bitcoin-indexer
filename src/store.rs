@@ -53,6 +53,7 @@ impl StoreClient for Store {
     fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
 
+
         match existing_block_at_height {
             Some(block_hash) => {
                 // update block as an orphan.
@@ -104,6 +105,7 @@ impl StoreClient for Store {
         // 5. Update the best block height if this is the latest block.
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key.clone())?;
+      
         if best_block_height.is_none() || best_block_height < Some(block.height) {
             self.db.set(key, block.height, None)?;
         }
