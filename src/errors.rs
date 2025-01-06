@@ -9,10 +9,10 @@ pub enum BitcoinClientError {
     UrlParseError(#[from] url::ParseError),
 
     #[error("Error creating client")]
-    ClientError(#[from] bitcoincore_rpc::Error),
+    NewClientError(#[from] bitcoincore_rpc::Error),
 
-    #[error("Error getting blockchain info")] //find a good name for this error
-    BlockchainInfoError(bitcoincore_rpc::Error),
+    #[error("Error getting blockchain info")] 
+    ClientError(bitcoincore_rpc::Error),
 }
 
 #[derive(Error, Debug)]
