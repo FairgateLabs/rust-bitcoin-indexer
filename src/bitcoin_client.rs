@@ -20,7 +20,7 @@ impl BitcoinClient {
         };
 
         let client = Client::new(url.as_ref(), auth)
-            .map_err(|e| BitcoinClientError::ClientError(e))?;
+            .map_err(|e| BitcoinClientError::NewClientError(e))?;
 
         Ok(Self { client })
     }
@@ -76,13 +76,13 @@ impl BitcoinClientApi for BitcoinClient {
 
     fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<BlockHash, BitcoinClientError> {
         let block_hash = self.client.get_block_hash(u64::from(*height))
-            .map_err(|e| BitcoinClientError::BlockchainInfoError(e))?;
+            .map_err(|e| BitcoinClientError::ClientError(e))?;
         Ok(block_hash)
     }
 
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Block, BitcoinClientError> {
         let block = self.client.get_by_id(hash)
-            .map_err(|e| BitcoinClientError::BlockchainInfoError(e))?;
+            .map_err(|e| BitcoinClientError::ClientError(e))?;
         Ok(block)
     }
 }
