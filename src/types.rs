@@ -28,4 +28,5 @@ pub struct TransactionInfo {
     pub block_height: BlockHeight,
     pub block_hash: BlockHash,
     pub orphan: bool,
+    pub confirmations: u32,
 }

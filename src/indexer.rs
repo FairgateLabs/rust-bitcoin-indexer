@@ -59,7 +59,20 @@ where
     }
 
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
-        self.store.get_tx_info(tx_id)
+        let tx_info = self.store.get_tx_info(tx_id)?;
+
+        if let Some(mut tx_info) = tx_info {
+            let best_block = self.get_best_block()?;
+            if let Some(best_block) = best_block {
+                if !tx_info.orphan {
+                    tx_info.confirmations = best_block.height - tx_info.block_height + 1;
+                }
+            }
+
+            return Ok(Some(tx_info));
+        }
+
+        Ok(tx_info)
     }
 
     // After index blockchain given a height_to_index it returns the following index to index

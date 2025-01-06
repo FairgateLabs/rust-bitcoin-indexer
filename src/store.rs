@@ -62,7 +62,7 @@ impl StoreClient for Store {
 
             // save block
             let key = self.get_key(StoreKey::BlockByHash(block.hash));
-            self.db.set(key, block)?;
+            self.db.set(key, block, None)?;
         }
 
         //Create new entry for the new block
@@ -78,27 +78,27 @@ impl StoreClient for Store {
 
         let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
 
-        self.db.set(block_key, new_block)?;
+        self.db.set(block_key, new_block, None)?;
         // 2. Save the block hash by its height. This operation updates the best block at each height,
         // ensuring that all best blocks at a given height are stored.
         let height_key = self.get_key(StoreKey::BlockByHeight(block.height));
-        self.db.set(height_key, block.hash)?;
+        self.db.set(height_key, block.hash, None)?;
 
         // 3. Save block hash under each transaction ID (this is to know if tx exists).
         for tx in &block.txs {
             let tx_key = self.get_key(StoreKey::TransactionById(tx.compute_txid()));
-            self.db.set(tx_key, (tx, block.hash))?;
+            self.db.set(tx_key, (tx, block.hash), None)?;
         }
 
         // 4. Save transactions IDs by block hash.
         let txs_key = self.get_key(StoreKey::BlockTxsByHash(block.hash));
-        self.db.set(txs_key, &block.txs)?;
+        self.db.set(txs_key, &block.txs, None)?;
 
         // 5. Update the best block height if this is the latest block.
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key.clone())?;
         if best_block_height.is_none() || best_block_height.unwrap() < block.height {
-            self.db.set(key, block.height)?;
+            self.db.set(key, block.height, None)?;
         }
         Ok(())
     }
@@ -144,6 +144,7 @@ impl StoreClient for Store {
                 block_height: block.height,
                 block_hash,
                 orphan: block.orphan,
+                confirmations: 0,
             };
             Ok(Some(tx))
         } else {

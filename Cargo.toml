@@ -29,4 +29,4 @@ serde_json = "1.0"
 bitcoin_hashes = "0.15"
 hex = "0.4.3"
 ctrlc = "3.4"
-rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend", branch = "integration" }
+rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
