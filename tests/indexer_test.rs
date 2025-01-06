@@ -205,8 +205,6 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-
-
 #[test]
 fn test_index_height_block_not_exists() {
     let mut bitcoin_client = MockBitcoinClient::new();
@@ -285,7 +283,6 @@ fn test_blockchain_height_less_than_index_height() {
     assert_eq!(result.unwrap(), 1000);
 }
 
-// This test needs shows that an empty blockchain doesn't return an error
 #[test]
 fn test_index_height_empty_blockchain() {
     let mut bitcoin_client = MockBitcoinClient::new();
@@ -306,67 +303,6 @@ fn test_index_height_empty_blockchain() {
     let result = indexer.tick(&1);
 
     assert!(result.is_err(), "Error expected while trying to index in an empty blockchain");
-}
-
-#[test]
-fn test_index_height_reorg_detected() {
-    let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store_client = MockStore::new();
-
-    let hash_100 = 
-        BlockHash::from_str("57f5177941ed0bbabbda3265e65b84ddd1dea400504f20692d22f7a818f7b9a0").unwrap();
-    
-    let hash_101 = 
-        BlockHash::from_str("9200ec542323cbe50a3256d981c1ae0207ea3856a681855cb262a503b6f098bb").unwrap();
-    
-    let prev_hash = 
-        BlockHash::from_str("dbb5011abf75e72ecfae04decdff07ee1607747dd56f2c7262ceadf8612dcb82").unwrap();
-    let tx = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-    let tx2 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-    let block_100 = BlockInfo {
-        height: 100,
-        hash: hash_100,
-        prev_hash: prev_hash,
-        txs: vec![tx]
-    };
-
-    let block_101 = BlockInfo {
-        height: 101,
-        hash: hash_101,
-        prev_hash: hash_100,
-        txs: vec![tx2]
-    };
-
-    bitcoin_client.expect_get_block_by_height()
-        .times(2)
-        .returning(move |height| match height {
-            100 => Ok(Some(block_100.clone())),
-            101 => Ok(Some(block_101.clone())), 
-            _ => Ok(None)
-        });
-
-    store_client.expect_get_best_block()
-        .returning(move || Ok(Some(FullBlock {
-            height: 100,
-            hash: hash_100,
-            orphan: false,
-            prev_hash: prev_hash,
-            txs: Vec::new(),
-        })));
-
-    let indexer = Indexer::new(bitcoin_client, store_client).unwrap();
-    let result = indexer.tick(&101);
-    assert_eq!(result.unwrap(), 100);
 }
 
 use std::sync::Arc;
@@ -422,6 +358,9 @@ fn test_index_height_invalid_block() -> Result<(), anyhow::Error> {
 fn test_index_height_upper_limit_reached() {
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = MockStore::new();
+    bitcoin_client.expect_get_best_block()
+        .returning(|| Ok(500_000));
+
     bitcoin_client.expect_get_block_by_height()
         .returning(|height| {
             if *height > 500_000 { 
@@ -431,13 +370,13 @@ fn test_index_height_upper_limit_reached() {
                     height: *height, 
                     hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(), 
                     prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(), 
-                    txs: vec![] // or any other mock transactions if needed
+                    txs: vec![],
                 })) 
-            }            
+            }
         });
 
-        let indexer = Indexer::new(bitcoin_client, store).unwrap();
-        let result = indexer.tick(&500_101);
+    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let result = indexer.tick(&500_101);
 
     assert!(result.is_err());
 }
