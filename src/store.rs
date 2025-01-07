@@ -1,9 +1,8 @@
+use crate::errors::IndexerStoreError;
 use crate::types::BlockHeight;
 use crate::types::BlockInfo;
 use crate::types::FullBlock;
 use crate::types::TransactionInfo;
-use anyhow::Ok;
-use anyhow::Result;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
@@ -23,7 +22,7 @@ enum StoreKey {
 }
 
 impl Store {
-    pub fn new(file_path: &str) -> Result<Self> {
+    pub fn new(file_path: &str) -> Result<Self, IndexerStoreError> {
         let db = Storage::new_with_path(&PathBuf::from(format!("{}/indexer", file_path)))?;
         Ok(Self { db })
     }
@@ -42,28 +41,37 @@ impl Store {
 }
 
 pub trait StoreClient {
-    fn get_best_block(&self) -> Result<Option<FullBlock>>;
-    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>>;
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>>;
-    fn save_block(&self, block: &BlockInfo) -> Result<()>;
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError>;
+    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>, IndexerStoreError>;
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError>;
+    fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
 }
 
 #[automock]
 impl StoreClient for Store {
-    fn save_block(&self, block: &BlockInfo) -> Result<()> {
+    fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
 
-        if existing_block_at_height.is_some() {
-            // update block as an orphan.
-            let block_hash = existing_block_at_height.unwrap();
-            let mut block = self.get_block_by_hash(&block_hash)?.unwrap();
-            block.orphan = true;
 
-            // save block
-            let key = self.get_key(StoreKey::BlockByHash(block.hash));
-            self.db.set(key, block, None)?;
+        match existing_block_at_height {
+            Some(block_hash) => {
+                // update block as an orphan.
+                let mut block = match self.get_block_by_hash(&block_hash)? {
+                    Some(block) => block,
+                    None => return Err(IndexerStoreError::BlockNotFound),
+                };
+
+                block.orphan = true;
+
+                // save block
+                let key = self.get_key(StoreKey::BlockByHash(block.hash));
+                self.db.set(key, block, None)?;
+            },
+            None => {},
         }
+            
+        
 
         //Create new entry for the new block
         let new_block = FullBlock {
@@ -97,47 +105,57 @@ impl StoreClient for Store {
         // 5. Update the best block height if this is the latest block.
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key.clone())?;
-        if best_block_height.is_none() || best_block_height.unwrap() < block.height {
+      
+        if best_block_height.is_none() || best_block_height < Some(block.height) {
             self.db.set(key, block.height, None)?;
         }
         Ok(())
     }
 
     // Retrieve the height of the best block.
-    fn get_best_block(&self) -> Result<Option<FullBlock>> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key)?;
 
         if let Some(height) = best_block_height {
-            let block_hash = self.get_block_hash_by_height(height)?.unwrap();
-            let block = self.get_block_by_hash(&block_hash)?.unwrap();
-            Ok(Some(block))
+            match self.get_block_hash_by_height(height)?{ 
+                Some(block_hash) => {
+                    match self.get_block_by_hash(&block_hash)? {
+                        Some(block) => Ok(Some(block)),
+                        None => Err(IndexerStoreError::BlockNotFound),
+                    }
+                }
+                None => Err(IndexerStoreError::BlockNotFound),
+            }
         } else {
             Ok(None)
         }
     }
 
     // Retrieve the block hash by height.
-    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>> {
+    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BlockByHeight(height));
         let block_hash: Option<BlockHash> = self.db.get(key)?;
         Ok(block_hash)
     }
 
     // Retrieve the block by its hash.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BlockByHash(*hash));
         let block: Option<FullBlock> = self.db.get(key)?;
         Ok(block)
     }
 
     // Check if a transaction exists and return its block height if found.
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
         let tx_data = self.db.get::<&str, (Transaction, BlockHash)>(&key)?;
 
         if let Some((tx, block_hash)) = tx_data {
-            let block = self.get_block_by_hash(&block_hash)?.unwrap();
+            let block = match self.get_block_by_hash(&block_hash)? {
+                Some(block) => block,
+                None => return Err(IndexerStoreError::BlockNotFound),
+            };
 
             let tx = TransactionInfo {
                 tx,
