@@ -9,6 +9,9 @@ use bitcoin_indexer::{
     types::{BlockInfo, FullBlock},
 };
 use mockall::predicate::eq;
+use bitcoin::Txid;
+use bitcoin_indexer::types::TransactionInfo;
+
 
 #[test]
 fn reorg_1_block() -> Result<(), anyhow::Error> {
@@ -206,6 +209,114 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
 }
 
 #[test]
+fn test_get_tx_existing_non_orphan() {
+    let mut bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
+    let block_hash = BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d").unwrap();
+    let transact = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: vec![]
+    };
+    let tx_info = TransactionInfo {
+        tx: transact,
+        block_height: 500,
+        block_hash: block_hash,
+        orphan: false,
+        confirmations: 0, // Será actualizado
+    };
+
+    store.expect_get_tx_info()
+        .with(eq(tx_id.clone()))
+        .returning(move |_| Ok(Some(tx_info.clone())));
+
+    let best_block = FullBlock {
+        height: 505,
+        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d").unwrap(),
+        prev_hash: BlockHash::from_str("e3d2aa2c8211961e6a6f94740cd1e9be6a8e55534ed824f82a157dd2c51be5f2").unwrap(),
+        orphan: false,
+        txs: vec![]
+    };
+
+    store.expect_get_best_block()
+        .returning(move || Ok(Some(best_block.clone())));
+
+    bitcoin_client.expect_get_best_block()
+        .returning(|| Ok(505));
+
+    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+
+    let result = indexer.get_tx(&tx_id).unwrap();
+    assert!(result.is_some());
+    let tx_info = result.unwrap();
+    assert_eq!(tx_info.confirmations, 6);
+}
+
+#[test]
+fn test_get_tx_existing_orphan() {
+    let bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
+
+    let tx_info = TransactionInfo {
+        tx: Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        },
+        block_height: 0,
+        block_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+        orphan: true,
+        confirmations: 0,
+    };
+
+    store.expect_get_tx_info()
+        .with(eq(tx_id.clone()))
+        .returning(move |_| Ok(Some(tx_info.clone())));
+
+    let best_block = FullBlock {
+        height: 1000,
+        hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+        prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+        orphan: true,
+        txs: vec![]
+    };
+
+    store.expect_get_best_block()
+        .returning(move || Ok(Some(best_block.clone())));
+
+    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+
+    let result = indexer.get_tx(&tx_id).unwrap();
+    assert!(result.is_some());
+
+    let tx_info = result.unwrap();
+    assert_eq!(tx_info.confirmations, 0); // Confirmaciones no cambian para huérfanos
+}
+
+#[test]
+fn test_get_tx_nonexistent() {
+    let bitcoin_client = MockBitcoinClient::new();
+    let mut store = MockStore::new();
+
+    let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
+
+    store.expect_get_tx_info()
+        .with(eq(tx_id.clone()))
+        .returning(move |_| Ok(None));
+
+    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+
+    let result = indexer.get_tx(&tx_id).unwrap();
+    assert!(result.is_none()); // Transacción no encontrada
+}
+
+#[test]
 fn test_blockchain_height_lower_than_index_height() {
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = MockStore::new();
@@ -218,7 +329,6 @@ fn test_blockchain_height_lower_than_index_height() {
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
-// get_transaction >> fijarse casos tambien de huerfanos
 
 #[test]
 fn test_blockchain_height_less_than_index_height() {
@@ -233,3 +343,4 @@ fn test_blockchain_height_less_than_index_height() {
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
+
