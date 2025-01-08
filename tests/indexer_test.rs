@@ -222,7 +222,7 @@ fn test_get_tx_existing_non_orphan() {
         block_height: 500,
         block_hash: block_hash,
         orphan: false,
-        confirmations: 0, // Será actualizado
+        confirmations: 0,
     };
 
     store.expect_get_tx_info()
@@ -243,7 +243,7 @@ fn test_get_tx_existing_non_orphan() {
     bitcoin_client.expect_get_best_block()
         .returning(|| Ok(505));
 
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let indexer = Indexer::new(bitcoin_client, store);
 
     let result = indexer.get_tx(&tx_id).unwrap();
     assert!(result.is_some());
@@ -286,13 +286,13 @@ fn test_get_tx_existing_orphan() {
     store.expect_get_best_block()
         .returning(move || Ok(Some(best_block.clone())));
 
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let indexer = Indexer::new(bitcoin_client, store);
 
     let result = indexer.get_tx(&tx_id).unwrap();
     assert!(result.is_some());
 
     let tx_info = result.unwrap();
-    assert_eq!(tx_info.confirmations, 0); // Confirmaciones no cambian para huérfanos
+    assert_eq!(tx_info.confirmations, 0); 
 }
 
 #[test]
@@ -306,10 +306,10 @@ fn test_get_tx_nonexistent() {
         .with(eq(tx_id.clone()))
         .returning(move |_| Ok(None));
 
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let indexer = Indexer::new(bitcoin_client, store);
 
     let result = indexer.get_tx(&tx_id).unwrap();
-    assert!(result.is_none()); // Transacción no encontrada
+    assert!(result.is_none());
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn test_blockchain_height_lower_than_index_height() {
         .expect_get_best_block()
         .returning(move || Ok(500)); // Blockchain height is lower
 
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let indexer = Indexer::new(bitcoin_client, store);
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
@@ -333,9 +333,9 @@ fn test_blockchain_height_less_than_index_height() {
 
     bitcoin_client
         .expect_get_best_block()
-        .returning(move || Ok(999)); // Blockchain height is lower than height_to_index (1000)
+        .returning(move || Ok(999));
 
-    let indexer = Indexer::new(bitcoin_client, store).unwrap();
+    let indexer = Indexer::new(bitcoin_client, store);
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
