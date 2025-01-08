@@ -27,7 +27,7 @@ jobs:
     
     - name: Clone Storage Backend
       run: |        
-        git clone https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git
+        git clone https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git ../rust-bitvmx-storage-backend
 
     - name: Build project
       run: cargo build --verbose

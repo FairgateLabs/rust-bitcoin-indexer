@@ -18,6 +18,7 @@ env_logger = { version = "*", default-features = false, features = [
   "atty",
   "humantime",
 ] }
+thiserror = "1.0.63"
 dotenv = "0.15"
 anyhow = "1.0.86"
 clap = { version = "4.5.9", features = ["derive"] }

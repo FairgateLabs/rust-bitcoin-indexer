@@ -1,9 +1,9 @@
 use crate::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
+    errors::IndexerError,
     store::{Store, StoreClient},
     types::{BlockHeight, FullBlock, TransactionInfo},
 };
-use anyhow::Result;
 use bitcoin::Txid;
 use log::{info, warn};
 use mockall::automock;
@@ -19,9 +19,9 @@ where
 #[automock]
 pub trait IndexerApi {
     // This method indexes the block height received as a parameter
-    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight>;
-    fn get_best_block(&self) -> Result<Option<FullBlock>>;
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>>;
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError>;
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
 }
 
 impl<B, S> Indexer<B, S>
@@ -29,16 +29,19 @@ where
     B: BitcoinClientApi,
     S: StoreClient,
 {
-    pub fn new(bitcoin_indexer_client: B, store: S) -> Result<Self> {
-        Ok(Self {
+    pub fn new(bitcoin_indexer_client: B, store: S) -> Self {
+        Self {
             bitcoin_client: bitcoin_indexer_client,
             store,
-        })
+        }
     }
 }
 
 impl Indexer<BitcoinClient, Store> {
-    pub fn new_with_path(bitcoin_client: BitcoinClient, store_path: &str) -> Result<Self> {
+    pub fn new_with_path(
+        bitcoin_client: BitcoinClient,
+        store_path: &str,
+    ) -> Result<Self, IndexerError> {
         let store = Store::new(store_path)?;
         Ok(Self {
             bitcoin_client,
@@ -53,12 +56,12 @@ where
     B: BitcoinClientApi,
     S: StoreClient,
 {
-    fn get_best_block(&self) -> Result<Option<FullBlock>> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_best_block()?;
         Ok(block)
     }
 
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>> {
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
         let tx_info = self.store.get_tx_info(tx_id)?;
 
         if let Some(mut tx_info) = tx_info {
@@ -76,7 +79,7 @@ where
     }
 
     // After index blockchain given a height_to_index it returns the following index to index
-    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight> {
+    fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
         //     If not, there is reorg
@@ -99,19 +102,21 @@ where
 
         let block = self.bitcoin_client.get_block_by_height(height_to_index)?;
 
-        if block.is_none() {
-            //Block does not exist in blockchain, then return same height.
-            return Ok(*height_to_index);
-        }
+        let block = match block {
+            Some(block) => block,
+            None => {
+                //Block does not exist in blockchain, then return same height.
+                return Ok(*height_to_index);
+            }
+        };
 
-        let block = block.unwrap();
         let prev_height = height_to_index.saturating_sub(1);
         let prev_block_hash = self.store.get_block_hash_by_height(prev_height)?;
 
         // Is Genesis block or a checkpoint block
         if *height_to_index == 0
             || prev_block_hash.is_none()
-            || block.prev_hash == prev_block_hash.unwrap()
+            || Some(block.prev_hash) == prev_block_hash
         {
             if prev_block_hash.is_none() {
                 warn!("Block height not found. Then could be a checkpoint block",);
@@ -131,8 +136,7 @@ where
         // if current block prev_hash is different than the previous block hash, then we need to reorg
         warn!(
             "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
-            height_to_index,
-            prev_block_hash.unwrap()
+            height_to_index, prev_block_hash
         );
 
         Ok(height_to_index - 1)
