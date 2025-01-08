@@ -1,5 +1,8 @@
 use crate::{
-    bitcoin_client::{BitcoinClient, BitcoinClientApi}, errors::IndexerError, store::{Store, StoreClient}, types::{BlockHeight, FullBlock, TransactionInfo}
+    bitcoin_client::{BitcoinClient, BitcoinClientApi},
+    errors::IndexerError,
+    store::{Store, StoreClient},
+    types::{BlockHeight, FullBlock, TransactionInfo},
 };
 use bitcoin::Txid;
 use log::{info, warn};
@@ -35,7 +38,10 @@ where
 }
 
 impl Indexer<BitcoinClient, Store> {
-    pub fn new_with_path(bitcoin_client: BitcoinClient, store_path: &str) -> Result<Self, IndexerError> {
+    pub fn new_with_path(
+        bitcoin_client: BitcoinClient,
+        store_path: &str,
+    ) -> Result<Self, IndexerError> {
         let store = Store::new(store_path)?;
         Ok(Self {
             bitcoin_client,
@@ -101,7 +107,7 @@ where
             None => {
                 //Block does not exist in blockchain, then return same height.
                 return Ok(*height_to_index);
-            },
+            }
         };
 
         let prev_height = height_to_index.saturating_sub(1);
@@ -130,8 +136,7 @@ where
         // if current block prev_hash is different than the previous block hash, then we need to reorg
         warn!(
             "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
-            height_to_index,
-            prev_block_hash
+            height_to_index, prev_block_hash
         );
 
         Ok(height_to_index - 1)

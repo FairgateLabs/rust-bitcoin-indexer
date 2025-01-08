@@ -42,7 +42,10 @@ impl Store {
 
 pub trait StoreClient {
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>, IndexerStoreError>;
+    fn get_block_hash_by_height(
+        &self,
+        height: BlockHeight,
+    ) -> Result<Option<BlockHash>, IndexerStoreError>;
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError>;
     fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
@@ -52,7 +55,6 @@ pub trait StoreClient {
 impl StoreClient for Store {
     fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
-
 
         match existing_block_at_height {
             Some(block_hash) => {
@@ -67,11 +69,9 @@ impl StoreClient for Store {
                 // save block
                 let key = self.get_key(StoreKey::BlockByHash(block.hash));
                 self.db.set(key, block, None)?;
-            },
-            None => {},
+            }
+            None => {}
         }
-            
-        
 
         //Create new entry for the new block
         let new_block = FullBlock {
@@ -105,7 +105,7 @@ impl StoreClient for Store {
         // 5. Update the best block height if this is the latest block.
         let key = self.get_key(StoreKey::BestBlock);
         let best_block_height: Option<BlockHeight> = self.db.get(key.clone())?;
-      
+
         if best_block_height.is_none() || best_block_height < Some(block.height) {
             self.db.set(key, block.height, None)?;
         }
@@ -118,13 +118,11 @@ impl StoreClient for Store {
         let best_block_height: Option<BlockHeight> = self.db.get(key)?;
 
         if let Some(height) = best_block_height {
-            match self.get_block_hash_by_height(height)?{ 
-                Some(block_hash) => {
-                    match self.get_block_by_hash(&block_hash)? {
-                        Some(block) => Ok(Some(block)),
-                        None => Err(IndexerStoreError::BlockNotFound),
-                    }
-                }
+            match self.get_block_hash_by_height(height)? {
+                Some(block_hash) => match self.get_block_by_hash(&block_hash)? {
+                    Some(block) => Ok(Some(block)),
+                    None => Err(IndexerStoreError::BlockNotFound),
+                },
                 None => Err(IndexerStoreError::BlockNotFound),
             }
         } else {
@@ -133,7 +131,10 @@ impl StoreClient for Store {
     }
 
     // Retrieve the block hash by height.
-    fn get_block_hash_by_height(&self, height: BlockHeight) -> Result<Option<BlockHash>, IndexerStoreError> {
+    fn get_block_hash_by_height(
+        &self,
+        height: BlockHeight,
+    ) -> Result<Option<BlockHash>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BlockByHeight(height));
         let block_hash: Option<BlockHash> = self.db.get(key)?;
         Ok(block_hash)

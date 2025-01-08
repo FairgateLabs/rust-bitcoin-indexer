@@ -11,7 +11,7 @@ pub enum BitcoinClientError {
     #[error("Error creating client")]
     NewClientError(#[from] bitcoincore_rpc::Error),
 
-    #[error("Error getting blockchain info")] 
+    #[error("Error getting blockchain info")]
     ClientError(bitcoincore_rpc::Error),
 }
 
@@ -32,4 +32,3 @@ pub enum IndexerError {
     #[error("Error with Store")]
     StoreError(#[from] IndexerStoreError),
 }
-
