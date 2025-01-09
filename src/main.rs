@@ -4,12 +4,13 @@ use bitcoin_indexer::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
     helper::define_height_to_sync,
     indexer::{Indexer, IndexerApi},
-    store::{Store, StoreClient},
+    store::{IndexerStore, StoreClient},
     types::BlockHeight,
 };
 use clap::Parser;
 use log::{info, warn};
-use std::{env, sync::mpsc::channel, thread, time::Duration};
+use std::{env, path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
+use storage_backend::storage::Storage;
 
 fn main() -> Result<()> {
     let (tx, rx) = channel();
@@ -45,14 +46,15 @@ fn main() -> Result<()> {
     info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
 
-    let store = Store::new(&db_file_path)?;
-    let best_block = store.get_best_block()?;
+    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(db_file_path))?);
+    let indexer_store = IndexerStore::new(storage)?;
+    let best_block = indexer_store.get_best_block()?;
     let best_block_height = best_block.map(|block| block.height);
     let mut height_to_sync =
         define_height_to_sync(checkpoint_height, blockchain_height, best_block_height)?;
     info!("Start synchronizing from {}H", height_to_sync);
 
-    let indexer = Indexer::new(bitcoin_client, store);
+    let indexer = Indexer::new(bitcoin_client, indexer_store);
 
     let mut prev_height = 0;
 

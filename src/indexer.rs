@@ -1,7 +1,7 @@
 use crate::{
-    bitcoin_client::{BitcoinClient, BitcoinClientApi},
+    bitcoin_client::BitcoinClientApi,
     errors::IndexerError,
-    store::{Store, StoreClient},
+    store::StoreClient,
     types::{BlockHeight, FullBlock, TransactionInfo},
 };
 use bitcoin::Txid;
@@ -34,19 +34,6 @@ where
             bitcoin_client: bitcoin_indexer_client,
             store,
         }
-    }
-}
-
-impl Indexer<BitcoinClient, Store> {
-    pub fn new_with_path(
-        bitcoin_client: BitcoinClient,
-        store_path: &str,
-    ) -> Result<Self, IndexerError> {
-        let store = Store::new(store_path)?;
-        Ok(Self {
-            bitcoin_client,
-            store,
-        })
     }
 }
 
