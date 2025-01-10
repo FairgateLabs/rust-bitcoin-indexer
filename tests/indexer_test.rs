@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction, Txid};
 use bitcoin_indexer::{
-    bitcoin_client::MockBitcoinClient, indexer::{Indexer, IndexerApi}, store::{MockIndexerStore, MockStore}, types::{BlockInfo, FullBlock, TransactionInfo}
+    bitcoin_client::MockBitcoinClient, indexer::{Indexer, IndexerApi}, store::MockIndexerStore, types::{BlockInfo, FullBlock, TransactionInfo}
 };
 use mockall::predicate::eq;
 
@@ -176,7 +176,7 @@ fn reorg_1_block() -> Result<(), anyhow::Error> {
 #[test]
 fn test_get_best_block() -> Result<(), anyhow::Error> {
     let bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let hash = BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
     let prev_hash = BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
@@ -204,7 +204,7 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
 #[test]
 fn test_get_tx_existing_non_orphan() {
     let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
     let block_hash = BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d").unwrap();
@@ -251,7 +251,7 @@ fn test_get_tx_existing_non_orphan() {
 #[test]
 fn test_get_tx_existing_orphan() {
     let bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
 
@@ -295,7 +295,7 @@ fn test_get_tx_existing_orphan() {
 #[test]
 fn test_get_tx_nonexistent() {
     let bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
 
@@ -312,7 +312,7 @@ fn test_get_tx_nonexistent() {
 #[test]
 fn test_blockchain_height_lower_than_index_height() {
     let mut bitcoin_client = MockBitcoinClient::new();
-    let store = MockStore::new();
+    let store = MockIndexerStore::new();
 
     bitcoin_client
         .expect_get_best_block()
@@ -326,7 +326,7 @@ fn test_blockchain_height_lower_than_index_height() {
 #[test]
 fn test_blockchain_height_less_than_index_height() {
     let mut bitcoin_client = MockBitcoinClient::new();
-    let store = MockStore::new();
+    let store = MockIndexerStore::new();
 
     bitcoin_client
         .expect_get_best_block()
