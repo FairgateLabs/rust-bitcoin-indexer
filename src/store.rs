@@ -14,6 +14,7 @@ use storage_backend::storage::Storage;
 pub struct IndexerStore {
     store: Rc<Storage>,
 }
+
 enum StoreKey {
     BlockByHash(BlockHash),
     BlockByHeight(BlockHeight),
@@ -28,14 +29,15 @@ impl IndexerStore {
     }
 
     fn get_key(&self, key: StoreKey) -> String {
+        let prefix = "indexer";
         match key {
-            StoreKey::BlockByHash(block_hash) => format!("block/hash/{}", block_hash),
+            StoreKey::BlockByHash(block_hash) => format!("{prefix}/block/hash/{block_hash}"),
             StoreKey::BlockByHeight(block_height) => {
-                format!("block/height/{}", block_height)
+                format!("{prefix}/block/height/{block_height}")
             }
-            StoreKey::TransactionById(tx_id) => format!("block/tx/{}", tx_id),
-            StoreKey::BlockTxsByHash(block_hash) => format!("block/{}/txs", block_hash),
-            StoreKey::BestBlock => "meta/best_block_height".to_string(),
+            StoreKey::TransactionById(tx_id) => format!("{prefix}/block/tx/{tx_id}"),
+            StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
+            StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
         }
     }
 }
