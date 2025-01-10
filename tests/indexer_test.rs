@@ -3,20 +3,19 @@ use std::str::FromStr;
 use anyhow::Ok;
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction}; //, Txid};
 use bitcoin_indexer::{
-    bitcoin_client::MockBitcoinClient,
-    indexer::{Indexer, IndexerApi},
-    store::MockStore,
-    types::{BlockInfo, FullBlock},
+    bitcoin_client::{BitcoinClient, MockBitcoinClient},
+    indexer::Indexer,
+    store::{MockStore, Store, StoreClient},
+    types::{BlockInfo, FullBlock, TransactionInfo},
 };
 use mockall::predicate::eq;
 use bitcoin::Txid;
-use bitcoin_indexer::types::TransactionInfo;
 
 
 #[test]
 fn reorg_1_block() -> Result<(), anyhow::Error> {
     let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let tx = Transaction {
         version: Version::TWO,
@@ -219,26 +218,32 @@ fn test_get_tx_existing_non_orphan() {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![],
-        output: vec![]
+        output: vec![],
     };
-    let tx_info = TransactionInfo {
-        tx: transact,
+    let expected_tx_info = TransactionInfo {
+        tx: transact.clone(),
         block_height: 500,
-        block_hash: block_hash,
+        block_hash: block_hash.clone(),
         orphan: false,
-        confirmations: 0, // Será actualizado
+        confirmations: 6,
     };
 
     store.expect_get_tx_info()
         .with(eq(tx_id.clone()))
-        .returning(move |_| Ok(Some(tx_info.clone())));
+        .returning(move |_| Ok(Some(TransactionInfo {
+            tx: transact.clone(),
+            block_height: 500,
+            block_hash: block_hash.clone(),
+            orphan: false,
+            confirmations: 0,
+        })));
 
     let best_block = FullBlock {
         height: 505,
-        hash: BlockHash::from_str("12efaa3528db3845a859c470a525f1b8b4643b0d561f961ab395a9db778c204d").unwrap(),
+        hash: block_hash.clone(),
         prev_hash: BlockHash::from_str("e3d2aa2c8211961e6a6f94740cd1e9be6a8e55534ed824f82a157dd2c51be5f2").unwrap(),
         orphan: false,
-        txs: vec![]
+        txs: vec![],
     };
 
     store.expect_get_best_block()
@@ -252,16 +257,16 @@ fn test_get_tx_existing_non_orphan() {
     let result = indexer.get_tx(&tx_id).unwrap();
     assert!(result.is_some());
     let tx_info = result.unwrap();
-    assert_eq!(tx_info.confirmations, 6);
+    assert_eq!(tx_info, expected_tx_info);
 }
 
 #[test]
-fn test_get_tx_existing_orphan() {
-    let bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+fn test_get_tx_existing_orphan_with_real_storage() {
+    let bitcoin_client = BitcoinClient::new("http://localhost:18443").unwrap();
+    let database_url = "./test_rocksdb";
+    let store = Store::new(database_url).expect("Failed to initialize store");
 
     let tx_id = Txid::from_str("4d3a5c31e5a25d27687a3ed3bb8a3f65e5fdccf39f476574f8a73d38a65f3a5d").unwrap();
-
     let tx_info = TransactionInfo {
         tx: Transaction {
             version: Version::TWO,
@@ -275,28 +280,42 @@ fn test_get_tx_existing_orphan() {
         confirmations: 0,
     };
 
-    store.expect_get_tx_info()
-        .with(eq(tx_id.clone()))
-        .returning(move |_| Ok(Some(tx_info.clone())));
-
-    let best_block = FullBlock {
-        height: 1000,
-        hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
-        prev_hash: BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-        orphan: true,
-        txs: vec![]
+    let block_info = BlockInfo {
+        hash: tx_info.block_hash,
+        prev_hash: BlockHash::from_str("444d0bc9493a7d16873ad7831b3f5a96cfa22b24b3cac880a96b8e74a7840a68").unwrap(),
+        height: tx_info.block_height,
+        txs: vec![tx_info.tx.clone()],
     };
+    store.save_block(&block_info).expect("Failed to save block");
 
-    store.expect_get_best_block()
-        .returning(move || Ok(Some(best_block.clone())));
+    let stored_block = store.get_block_by_hash(&tx_info.block_hash).unwrap();
+    if let Some(block) = stored_block {
+        assert!(
+            block.orphan == true,
+            "Block orphan status is not correct"
+        );
+    } else {
+        panic!("Block was not saved properly");
+    }
+
+    let stored_tx_info = store.get_tx_info(&tx_id).unwrap();
+    assert!(
+        stored_tx_info.is_some(),
+        "Transaction info was not saved in the store"
+    );
 
     let indexer = Indexer::new(bitcoin_client, store).unwrap();
 
     let result = indexer.get_tx(&tx_id).unwrap();
-    assert!(result.is_some());
+    assert!(
+        result.is_some(),
+        "Indexer did not return the transaction info"
+    );
 
-    let tx_info = result.unwrap();
-    assert_eq!(tx_info.confirmations, 0); // Confirmaciones no cambian para huérfanos
+    let retrieved_tx_info = result.unwrap();
+    assert_eq!(retrieved_tx_info, tx_info);
+
+    std::fs::remove_dir_all(database_url).expect("Failed to clean up RocksDB directory");
 }
 
 #[test]
@@ -343,4 +362,3 @@ fn test_blockchain_height_less_than_index_height() {
     let result = indexer.tick(&1000);
     assert_eq!(result.unwrap(), 1000);
 }
-
