@@ -24,7 +24,6 @@ pub fn define_height_to_sync(
 
     match checkpoint_height {
         Some(checkpoint) => {
-
             if checkpoint < height_to_sync {
                 warn!("Passed CHECKPOINT_HEIGHT command line is behind last indexed height");
             }
@@ -37,7 +36,7 @@ pub fn define_height_to_sync(
                 let error =
                     "The current block height of the Bitcoin network is behind the starting block to sync";
                 error!("{}", error);
-                return Err(BitcoinClientError::InvalidHeight)
+                return Err(BitcoinClientError::InvalidHeight);
             }
         }
         None => {

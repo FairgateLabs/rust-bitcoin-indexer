@@ -19,8 +19,7 @@ impl BitcoinClient {
             None => Auth::None,
         };
 
-        let client = Client::new(url.as_ref(), auth)
-            .map_err(|e| BitcoinClientError::NewClientError(e))?;
+        let client = Client::new(url.as_ref(), auth).map_err(BitcoinClientError::NewClientError)?;
 
         Ok(Self { client })
     }
@@ -30,9 +29,13 @@ impl BitcoinClient {
 pub trait BitcoinClientApi {
     fn get_best_block(&self) -> Result<BlockHeight, BitcoinClientError>;
 
-    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>, BitcoinClientError>;
+    fn get_block_by_height(
+        &self,
+        height: &BlockHeight,
+    ) -> Result<Option<BlockInfo>, BitcoinClientError>;
 
-    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<BlockHash, BitcoinClientError>;
+    fn get_block_id_by_height(&self, height: &BlockHeight)
+        -> Result<BlockHash, BitcoinClientError>;
 
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Block, BitcoinClientError>;
 
@@ -58,9 +61,11 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(block_height as u32)
     }
 
-    fn get_block_by_height(&self, height: &BlockHeight) -> Result<Option<BlockInfo>, BitcoinClientError> {
-        
-        let block_hash = self.get_block_id_by_height(&height)?;
+    fn get_block_by_height(
+        &self,
+        height: &BlockHeight,
+    ) -> Result<Option<BlockInfo>, BitcoinClientError> {
+        let block_hash = self.get_block_id_by_height(height)?;
 
         let block = self.get_block_by_hash(&block_hash)?;
 
@@ -74,15 +79,22 @@ impl BitcoinClientApi for BitcoinClient {
         Ok(Some(block_info))
     }
 
-    fn get_block_id_by_height(&self, height: &BlockHeight) -> Result<BlockHash, BitcoinClientError> {
-        let block_hash = self.client.get_block_hash(u64::from(*height))
-            .map_err(|e| BitcoinClientError::ClientError(e))?;
+    fn get_block_id_by_height(
+        &self,
+        height: &BlockHeight,
+    ) -> Result<BlockHash, BitcoinClientError> {
+        let block_hash = self
+            .client
+            .get_block_hash(u64::from(*height))
+            .map_err(BitcoinClientError::ClientError)?;
         Ok(block_hash)
     }
 
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Block, BitcoinClientError> {
-        let block = self.client.get_by_id(hash)
-            .map_err(|e| BitcoinClientError::ClientError(e))?;
+        let block = self
+            .client
+            .get_by_id(hash)
+            .map_err(BitcoinClientError::ClientError)?;
         Ok(block)
     }
 }
