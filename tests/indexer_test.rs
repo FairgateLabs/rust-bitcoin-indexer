@@ -2,17 +2,14 @@ use std::str::FromStr;
 
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction, Txid};
 use bitcoin_indexer::{
-    bitcoin_client::MockBitcoinClient,
-    indexer::{Indexer, IndexerApi},
-    store::MockStore,
-    types::{BlockInfo, FullBlock, TransactionInfo},
+    bitcoin_client::MockBitcoinClient, indexer::{Indexer, IndexerApi}, store::MockIndexerStore, types::BlockInfo
 };
 use mockall::predicate::eq;
 
 #[test]
 fn reorg_1_block() -> Result<(), anyhow::Error> {
     let mut bitcoin_client = MockBitcoinClient::new();
-    let mut store = MockStore::new();
+    let mut store = MockIndexerStore::new();
 
     let tx = Transaction {
         version: Version::TWO,
