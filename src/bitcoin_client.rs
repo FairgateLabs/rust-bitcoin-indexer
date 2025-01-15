@@ -23,6 +23,14 @@ impl BitcoinClient {
 
         Ok(Self { client })
     }
+
+    pub fn new_with_parts(url: &str, user: &str, pass: &str) -> Result<Self, BitcoinClientError> {
+        let auth = Auth::UserPass(user.to_owned(), pass.to_owned());
+
+        let client = Client::new(url.as_ref(), auth).map_err(BitcoinClientError::NewClientError)?;
+
+        Ok(Self { client })
+    }
 }
 
 #[automock]
