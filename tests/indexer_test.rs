@@ -1,13 +1,11 @@
-use std::str::FromStr;
-
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction, Txid};
 use bitcoin_indexer::{
-    bitcoin_client::MockBitcoinClient,
     indexer::{Indexer, IndexerApi},
     store::MockIndexerStore,
-    types::{BlockInfo, FullBlock, TransactionInfo},
 };
+use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
 use mockall::predicate::eq;
+use std::str::FromStr;
 
 #[test]
 fn reorg_1_block() -> Result<(), anyhow::Error> {

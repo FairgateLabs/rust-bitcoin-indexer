@@ -1,5 +1,4 @@
 /target
-.env
 data
 Cargo.lock
 test_output

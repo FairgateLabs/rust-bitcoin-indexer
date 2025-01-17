@@ -1,13 +1,10 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
-use crate::types::BlockHeight;
-use crate::types::BlockInfo;
-use crate::types::FullBlock;
-use crate::types::TransactionInfo;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
+use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo, FullBlock, TransactionInfo};
 use mockall::automock;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;

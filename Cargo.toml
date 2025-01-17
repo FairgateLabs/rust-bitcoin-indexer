@@ -19,9 +19,7 @@ env_logger = { version = "*", default-features = false, features = [
   "humantime",
 ] }
 thiserror = "1.0.63"
-dotenv = "0.15"
 anyhow = "1.0.86"
-clap = { version = "4.5.9", features = ["derive"] }
 mockall = "0.13.0"
 postgres = "0.19.1"
 url = "2.5.2"
@@ -31,3 +29,5 @@ bitcoin_hashes = "0.15"
 hex = "0.4.3"
 ctrlc = "3.4"
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
+bitvmx-settings = { path = "../rust-bitvmx-settings" }
+bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
