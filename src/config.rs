@@ -5,4 +5,5 @@ use serde::Deserialize;
 pub struct ConfigIndexer {
     pub db_file_path: String,
     pub rpc: RpcConfig,
+    pub checkpoint_height: Option<u32>,
 }

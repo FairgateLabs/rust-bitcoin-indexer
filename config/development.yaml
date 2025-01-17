@@ -5,6 +5,6 @@ rpc:
     username: foo
     password: rpcpassword
     wallet: test_wallet
-checkpoint_height_block: 1
+checkpoint_height: 1
 # possible values: error | warn | info | debug | trace
 rust_log: debug 

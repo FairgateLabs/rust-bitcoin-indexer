@@ -10,8 +10,8 @@ use bitvmx_bitcoin_rpc::{
     types::BlockHeight,
 };
 use bitvmx_settings::settings;
-use log::{info, warn};
-use std::{env, path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
+use log::info;
+use std::{ path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
 use storage_backend::storage::Storage;
 
 fn main() -> Result<()> {
@@ -24,7 +24,6 @@ fn main() -> Result<()> {
 
     let config = settings::load::<ConfigIndexer>()?;
 
-    let checkpoint_height: Option<u32> = get_checkpoint()?;
     let bitcoin_client =
         BitcoinClient::new(&config.rpc.url, &config.rpc.username, &config.rpc.password)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
@@ -38,7 +37,7 @@ fn main() -> Result<()> {
     let best_block = indexer_store.get_best_block()?;
     let best_block_height = best_block.map(|block| block.height);
     let mut height_to_sync =
-        define_height_to_sync(checkpoint_height, blockchain_height, best_block_height)?;
+        define_height_to_sync(config.checkpoint_height, blockchain_height, best_block_height)?;
     info!("Start synchronizing from {}H", height_to_sync);
 
     let indexer = Indexer::new(bitcoin_client, indexer_store);
@@ -62,22 +61,4 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn get_checkpoint() -> Result<Option<u32>> {
-    let checkpoint = env::var("CHECKPOINT_HEIGHT_BLOCK");
-    info!("Checkpoint {:?}", checkpoint);
-    let mut checkpoint_height = None;
-
-    if checkpoint.is_ok() {
-        checkpoint_height = match checkpoint?.parse::<BlockHeight>() {
-            Ok(checkpoint_height) => Some(checkpoint_height),
-            Err(_) => {
-                warn!("Checkpoint height must be a positive integer");
-                None
-            }
-        };
-    }
-
-    Ok(checkpoint_height)
 }
