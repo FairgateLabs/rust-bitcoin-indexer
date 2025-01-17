@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use bitcoin_indexer::{
-    args::Args,
-    bitcoin_client::{BitcoinClient, BitcoinClientApi},
+    config::ConfigIndexer,
     helper::define_height_to_sync,
     indexer::{Indexer, IndexerApi},
     store::{IndexerStore, StoreClient},
+};
+use bitvmx_bitcoin_rpc::{
+    bitcoin_client::{BitcoinClient, BitcoinClientApi},
     types::BlockHeight,
 };
-use clap::Parser;
+use bitvmx_settings::settings;
 use log::{info, warn};
 use std::{env, path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
 use storage_backend::storage::Storage;
@@ -18,35 +20,20 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
         .expect("Error setting Ctrl-C handler");
 
-    let envs = dotenv::dotenv();
-
-    if envs.is_err() {
-        warn!("No .env file found");
-    }
-
     env_logger::init();
 
-    let args = Args::parse();
-
-    let db_file_path: String = args
-        .db_file_path
-        .or_else(|| env::var("DB_FILE_PATH").ok())
-        .context("No Bitcoin database file path provided")?;
-
-    let rpc_url: String = args
-        .rpc_url
-        .or_else(|| env::var("RPC_URL").ok())
-        .context("No Bitcoin rpc url provided")?;
+    let config = settings::load::<ConfigIndexer>()?;
 
     let checkpoint_height: Option<u32> = get_checkpoint()?;
-    let bitcoin_client = BitcoinClient::new(&rpc_url)?;
+    let bitcoin_client =
+        BitcoinClient::new(&config.rpc.url, &config.rpc.username, &config.rpc.password)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
     let network = bitcoin_client.get_blockchain_info()?;
     info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
 
-    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(db_file_path))?);
+    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(config.db_file_path))?);
     let indexer_store = IndexerStore::new(storage)?;
     let best_block = indexer_store.get_best_block()?;
     let best_block_height = best_block.map(|block| block.height);

@@ -1,10 +1,8 @@
 use std::{path::PathBuf, rc::Rc, str::FromStr};
 
 use bitcoin::{absolute::LockTime, key::rand, transaction::Version, BlockHash, Transaction};
-use bitcoin_indexer::{
-    store::{IndexerStore, StoreClient},
-    types::{BlockInfo, FullBlock},
-};
+use bitcoin_indexer::store::{IndexerStore, StoreClient};
+use bitvmx_bitcoin_rpc::types::{BlockInfo, FullBlock};
 use storage_backend::storage::Storage;
 
 fn generate_random_string() -> String {

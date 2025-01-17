@@ -1,10 +1,6 @@
-use crate::{
-    bitcoin_client::BitcoinClientApi,
-    errors::IndexerError,
-    store::StoreClient,
-    types::{BlockHeight, FullBlock, TransactionInfo},
-};
+use crate::{errors::IndexerError, store::StoreClient};
 use bitcoin::Txid;
+use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
 use log::{info, warn};
 use mockall::automock;
 pub struct Indexer<B, S>
