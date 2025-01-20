@@ -11,7 +11,7 @@ use bitvmx_bitcoin_rpc::{
 };
 use bitvmx_settings::settings;
 use log::info;
-use std::{ path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
+use std::{path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
 use storage_backend::storage::Storage;
 
 fn main() -> Result<()> {
@@ -24,8 +24,7 @@ fn main() -> Result<()> {
 
     let config = settings::load::<ConfigIndexer>()?;
 
-    let bitcoin_client =
-        BitcoinClient::new(&config.rpc.url, &config.rpc.username, &config.rpc.password)?;
+    let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
     let network = bitcoin_client.get_blockchain_info()?;
@@ -36,8 +35,11 @@ fn main() -> Result<()> {
     let indexer_store = IndexerStore::new(storage)?;
     let best_block = indexer_store.get_best_block()?;
     let best_block_height = best_block.map(|block| block.height);
-    let mut height_to_sync =
-        define_height_to_sync(config.checkpoint_height, blockchain_height, best_block_height)?;
+    let mut height_to_sync = define_height_to_sync(
+        config.checkpoint_height,
+        blockchain_height,
+        best_block_height,
+    )?;
     info!("Start synchronizing from {}H", height_to_sync);
 
     let indexer = Indexer::new(bitcoin_client, indexer_store);
