@@ -1,5 +1,5 @@
 use bitvmx_bitcoin_rpc::{errors::BitcoinClientError, types::BlockHeight};
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 
 pub fn define_height_to_sync(
     checkpoint_height: Option<BlockHeight>,
