@@ -12,12 +12,8 @@ readme = "README.md"
 [dependencies]
 bitcoin = "0.32.2"
 bitcoincore-rpc = "0.19"
-log = "0.4"
-env_logger = { version = "*", default-features = false, features = [
-  "termcolor",
-  "atty",
-  "humantime",
-] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 thiserror = "1.0.63"
 anyhow = "1.0.86"
 mockall = "0.13.0"

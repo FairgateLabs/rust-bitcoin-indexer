@@ -1,7 +1,7 @@
 use crate::{errors::IndexerError, store::StoreClient};
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
-use log::{info, warn};
+use tracing::{info, warn};
 use mockall::automock;
 pub struct Indexer<B, S>
 where

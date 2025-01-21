@@ -10,7 +10,7 @@ use bitvmx_bitcoin_rpc::{
     types::BlockHeight,
 };
 use bitvmx_settings::settings;
-use log::info;
+use tracing::info;
 use std::{path::PathBuf, rc::Rc, sync::mpsc::channel, thread, time::Duration};
 use storage_backend::storage::Storage;
 
@@ -20,10 +20,19 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
         .expect("Error setting Ctrl-C handler");
 
-    env_logger::init();
-
     let config = settings::load::<ConfigIndexer>()?;
 
+    let log_level = match config.log_level {
+        Some(level) => {
+            level.parse().unwrap_or(tracing::Level::INFO)   
+        },
+        None => tracing::Level::INFO,     
+    };
+
+    tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .init();
+  
     let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
