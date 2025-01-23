@@ -18,30 +18,24 @@ jobs:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
     runs-on: ubuntu-latest
     steps:    
-    - name: Set up Git credentials for Bitcoin indexer
-      run: |
-        git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}:x-oauth-basic@github.com/FairgateLabs/".insteadOf "https://github.com/FairgateLabs/"
-
-    - name: Checkout repository
-      uses: actions/checkout@v4  
-    
-    - name: Clone Storage Backend
-      run: |        
-        git clone https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git ../rust-bitvmx-storage-backend
-
-    - name: Clone Settings
-      run: |        
-        git clone https://github.com/FairgateLabs/rust-bitvmx-settings.git ../rust-bitvmx-settings
-    
-    - name: Clone Bitcoin RPC
-      run: |        
-        git clone https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git ../rust-bitvmx-bitcoin-rpc
-
+    - name: Checkout rust-bitvmx-workspace
+      uses: actions/checkout@v4
+      with:
+        repository: FairgateLabs/rust-bitvmx-workspace
+        token: ${{ secrets.REPO_ACCESS_TOKEN }}
+        ref: main
+        path: rust-bitvmx-workspace # Store in $GITHUB_WORKSPACE/other-repo
+        submodules: true
+      
     - name: Build project
-      run: cargo build --verbose
+      run: |
+        cd rust-bitvmx-workspace/rust-bitcoin-indexer
+        cargo build --verbose
 
     - name: Run tests
-      run: cargo test --verbose
+      run: |
+        cd rust-bitvmx-workspace/rust-bitcoin-indexer
+        cargo test --verbose
 
   test-with-coverage:
     if: ${{ contains(github.event.pull_request.title, '[cov]') }}
@@ -53,12 +47,14 @@ jobs:
         repository-projects: write
 
     steps:
-    - name: Set up Git credentials for Bitcoin indexer
-      run: |
-        git config --global url."https://${{ secrets.REPO_ACCESS_TOKEN }}:x-oauth-basic@github.com/FairgateLabs/".insteadOf "https://github.com/FairgateLabs/"
-
-    - name: Checkout repository
+    - name: Checkout rust-bitvmx-workspace
       uses: actions/checkout@v4
+      with:
+        repository: FairgateLabs/rust-bitvmx-workspace
+        token: ${{ secrets.REPO_ACCESS_TOKEN }}
+        ref: main
+        path: rust-bitvmx-workspace # Store in $GITHUB_WORKSPACE/other-repo
+        submodules: true
 
     - name: Run cargo-tarpaulin
       uses: actions-rs/tarpaulin@v0.1
