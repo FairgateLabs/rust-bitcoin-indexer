@@ -24,7 +24,7 @@ jobs:
       target_path: 'rust-bitcoin-indexer/target'
 
   test-with-coverage:
-    if: ${{ contains(github.event.pull_request.title, '[cov]') }}
+    if: ${{ contains(github.event.pull_request.title, '[cov]') }} 
     runs-on: ubuntu-latest
 
     permissions:
