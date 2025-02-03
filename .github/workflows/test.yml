@@ -22,6 +22,8 @@ jobs:
       submodule_path: 'rust-bitcoin-indexer'
       cargo_lock_path: 'rust-bitcoin-indexer/Cargo.lock'
       target_path: 'rust-bitcoin-indexer/target'
+    secrets:
+      REPO_ACCESS_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
 
 
   test-with-coverage:
