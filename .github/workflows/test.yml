@@ -1,4 +1,4 @@
-name: 'Test action'
+name: 'Test Action - rust-bitcoin-indexer'
 
 on:
   push:
@@ -16,36 +16,13 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    runs-on: ubuntu-latest
-    steps:    
-    - name: Checkout rust-bitvmx-workspace
-      uses: actions/checkout@v4
-      with:
-        repository: FairgateLabs/rust-bitvmx-workspace
-        token: ${{ secrets.REPO_ACCESS_TOKEN }}
-        ref: main
-        path: rust-bitvmx-workspace # Store in $GITHUB_WORKSPACE/other-repo
-        submodules: true
+    uses: FairgateLabs/workflow-templates/.github/workflows/test_template.yml@main
+    with:
+      repo: 'FairgateLabs/rust-bitvmx-workspace'
+      submodule_path: 'rust-bitcoin-indexer'
+      cargo_lock_path: 'rust-bitcoin-indexer/Cargo.lock'
+      target_path: 'rust-bitcoin-indexer/target'
 
-    - name: Cache Cargo dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          rust-bitvmx-workspace/rust-bitcoin-indexer/target
-          rust-bitvmx-workspace/rust-bitcoin-indexer/Cargo.lock
-        key: ${{ runner.os }}-cargo-${{ hashFiles('rust-bitvmx-workspace/rust-bitcoin-indexer/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
-      
-    - name: Build project
-      run: |
-        cd rust-bitvmx-workspace/rust-bitcoin-indexer
-        cargo build --verbose
-
-    - name: Run tests
-      run: |
-        cd rust-bitvmx-workspace/rust-bitcoin-indexer
-        cargo test --verbose
 
   test-with-coverage:
     if: ${{ contains(github.event.pull_request.title, '[cov]') }}
