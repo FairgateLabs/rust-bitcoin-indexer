@@ -16,14 +16,28 @@ concurrency:
 jobs:
   test:
     if: ${{ !contains(github.event.pull_request.title, '[cov]') }}
-    uses: FairgateLabs/workflow-templates/.github/workflows/test_template.yml@main
-    with:
-      repo: 'FairgateLabs/rust-bitvmx-workspace'
-      submodule_path: 'rust-bitcoin-indexer'
-      cargo_lock_path: 'rust-bitcoin-indexer/Cargo.lock'
-      target_path: 'rust-bitcoin-indexer/target'
-    secrets:
-      REPO_ACCESS_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+    runs-on: ubuntu-latest  # Define the OS for the job
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'FairgateLabs/rust-bitvmx-workspace'
+          token: ${{ secrets.REPO_ACCESS_TOKEN }}  # Using token for checkout
+          ref: main
+          path: rust-bitvmx-workspace
+          submodules: true
+
+      - name: Run external workflow
+        uses: FairgateLabs/workflow-templates/.github/workflows/test_template.yml@main
+        with:
+          repo: 'FairgateLabs/rust-bitvmx-workspace'
+          submodule_path: 'rust-bitcoin-indexer'
+          cargo_lock_path: 'rust-bitvmx-workspace/Cargo.lock'
+          target_path: 'rust-bitvmx-workspace/target'
+        env:
+          REPO_ACCESS_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}  # Pass the secret as an environment variable
+
 
 
   test-with-coverage:
