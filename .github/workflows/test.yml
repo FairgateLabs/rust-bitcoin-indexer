@@ -22,7 +22,7 @@ jobs:
       submodule_path: 'rust-bitcoin-indexer'
       cargo_lock_path: 'rust-bitcoin-indexer/Cargo.lock'
       target_path: 'rust-bitcoin-indexer/target'
-    secrets: inherit      
+    secrets: inherit
 
   test-with-coverage:
     if: ${{ contains(github.event.pull_request.title, '[cov]') }} 
