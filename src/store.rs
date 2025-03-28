@@ -154,12 +154,21 @@ impl StoreClient for IndexerStore {
                 None => return Err(IndexerStoreError::BlockNotFound),
             };
 
+            let best_block = self.get_best_block()?;
+
+            let best_block_height = match best_block {
+                Some(block) => block.height,
+                None => 0,
+            };
+
             let tx = TransactionInfo {
                 tx,
                 block_height: block.height,
                 block_hash,
                 orphan: block.orphan,
-                confirmations: 0,
+                confirmations: best_block_height
+                    .saturating_sub(block.height)
+                    .saturating_add(1),
             };
             Ok(Some(tx))
         } else {

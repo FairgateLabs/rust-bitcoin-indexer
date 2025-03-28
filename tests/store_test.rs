@@ -189,6 +189,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     assert_eq!(tx_info.block_height, block_1.height);
     assert_eq!(tx_info.orphan, false);
     assert_eq!(tx_info.block_hash, block_1.hash);
+    assert_eq!(tx_info.confirmations, 1);
 
     //Creating a new block for height 1
     let block_hash_new_1 =
