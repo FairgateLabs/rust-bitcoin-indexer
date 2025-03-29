@@ -1,8 +1,8 @@
 use crate::{errors::IndexerError, store::StoreClient};
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
-use tracing::{info, warn};
 use mockall::automock;
+use tracing::{info, warn};
 pub struct Indexer<B, S>
 where
     B: BitcoinClientApi,
@@ -61,7 +61,9 @@ where
         Ok(tx_info)
     }
 
-    // After index blockchain given a height_to_index it returns the following index to index
+    /// Processes a single tick of the indexer, attempting to index the block at the given height.
+    /// Returns the height that was processed, which may be the same as the input height if no new
+    /// block was available to index. Otherwise, it returns the next height to index.
     fn tick(&self, height_to_index: &BlockHeight) -> Result<BlockHeight, IndexerError> {
         // Get new block at height_to_sync
         //   Check if new block prev hash is correct
@@ -116,9 +118,9 @@ where
             return Ok(height_to_index + 1);
         }
 
-        // if current block prev_hash is different than the previous block hash, then we need to reorg
+        // if current block prev_hash is different than the previous block hash, then we need to reorg.
         warn!(
-            "Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
+            "REORG: Block height mismatch. Block at height {}H is not matching prev_hash {:?}",
             height_to_index, prev_block_hash
         );
 
