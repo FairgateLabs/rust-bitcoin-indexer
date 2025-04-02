@@ -36,7 +36,7 @@ fn main() -> Result<()> {
     let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
     let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
-    let network = bitcoin_client.get_blockchain_info()?;
+    let network = bitcoin_client.get_blockchain_info()?.chain;
     info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
 
