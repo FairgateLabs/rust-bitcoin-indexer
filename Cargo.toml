@@ -26,4 +26,4 @@ hex = "0.4.3"
 ctrlc = "3.4"
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
 bitvmx-settings = { path = "../rust-bitvmx-settings" }
-bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" } 
+bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
