@@ -1,9 +1,9 @@
-use std::{path::PathBuf, rc::Rc, str::FromStr};
+use std::{rc::Rc, str::FromStr};
 
 use bitcoin::{absolute::LockTime, key::rand, transaction::Version, BlockHash, Transaction};
 use bitcoin_indexer::store::{IndexerStore, StoreClient};
 use bitvmx_bitcoin_rpc::types::{BlockInfo, FullBlock};
-use storage_backend::storage::Storage;
+use storage_backend::{storage::Storage, storage_config::StorageConfig};
 
 fn generate_random_string() -> String {
     use rand::Rng;
@@ -18,7 +18,8 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
         "test_output/get_best_block_height_test/{}",
         generate_random_string()
     );
-    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(path))?);
+    let config = StorageConfig::new(path, None);
+    let storage = Rc::new(Storage::new(&config)?);
     let indexer_store = IndexerStore::new(storage)?;
     let height = indexer_store.get_best_block()?;
     assert_eq!(height, None);
@@ -88,7 +89,8 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
 fn save_block_test() -> Result<(), anyhow::Error> {
     //This is not a test, is just a way to call methods easily.
     let path = format!("test_output/save_block_test/{}", generate_random_string());
-    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(path))?);
+    let config = StorageConfig::new(path, None);
+    let storage = Rc::new(Storage::new(&config)?);
     let indexer_store = IndexerStore::new(storage)?;
 
     let block_hash_1 =
@@ -156,7 +158,8 @@ fn save_block_test() -> Result<(), anyhow::Error> {
 #[test]
 fn get_tx_info_test() -> Result<(), anyhow::Error> {
     let path = format!("test_output/get_tx_info_test/{}", generate_random_string());
-    let storage = Rc::new(Storage::new_with_path(&PathBuf::from(path))?);
+    let config = StorageConfig::new(path, None);
+    let storage = Rc::new(Storage::new(&config)?);
     let indexer_store = IndexerStore::new(storage)?;
 
     let block_hash_1 =
