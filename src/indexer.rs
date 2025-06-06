@@ -1,15 +1,17 @@
-use crate::{errors::IndexerError, store::StoreClient};
+use crate::{
+    errors::IndexerError,
+    store::{IndexerStore, StoreClient},
+};
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
 use mockall::automock;
 use tracing::{error, info, warn};
-pub struct Indexer<B, S>
+pub struct Indexer<B>
 where
     B: BitcoinClientApi,
-    S: StoreClient,
 {
     pub bitcoin_client: B,
-    pub store: S,
+    pub store: IndexerStore,
 }
 
 #[automock]
@@ -22,14 +24,13 @@ pub trait IndexerApi {
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
 }
 
-impl<B, S> Indexer<B, S>
+impl<B> Indexer<B>
 where
     B: BitcoinClientApi,
-    S: StoreClient,
 {
     pub fn new(
         bitcoin_client: B,
-        store: S,
+        store: IndexerStore,
         // checkpoint_height: The starting block height for synchronization.
         checkpoint_height: Option<BlockHeight>,
     ) -> Result<Self, IndexerError> {
@@ -146,10 +147,9 @@ where
 }
 
 #[automock]
-impl<B, S> IndexerApi for Indexer<B, S>
+impl<B> IndexerApi for Indexer<B>
 where
     B: BitcoinClientApi,
-    S: StoreClient,
 {
     fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerError> {
         let height_to_sync = self.store.get_height_to_sync()?;
