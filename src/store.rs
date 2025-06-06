@@ -8,6 +8,7 @@ use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo, FullBlock, TransactionIn
 use mockall::automock;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
+use tracing::warn;
 pub struct IndexerStore {
     store: Rc<Storage>,
 }
@@ -18,6 +19,7 @@ enum StoreKey {
     TransactionById(Txid),
     BlockTxsByHash(BlockHash),
     BestBlock,
+    HeightToSync,
 }
 
 impl IndexerStore {
@@ -35,6 +37,7 @@ impl IndexerStore {
             StoreKey::TransactionById(tx_id) => format!("{prefix}/block/tx/{tx_id}"),
             StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
             StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
+            StoreKey::HeightToSync => format!("{prefix}/meta/height_to_sync"),
         }
     }
 }
@@ -48,6 +51,8 @@ pub trait StoreClient {
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError>;
     fn save_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
+    fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerStoreError>;
+    fn save_height_to_sync(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
 }
 
 #[automock]
@@ -57,16 +62,21 @@ impl StoreClient for IndexerStore {
 
         if let Some(block_hash) = existing_block_at_height {
             // update block as an orphan.
-            let mut block = match self.get_block_by_hash(&block_hash)? {
+            let mut saved_block = match self.get_block_by_hash(&block_hash)? {
                 Some(block) => block,
                 None => return Err(IndexerStoreError::BlockNotFound),
             };
 
-            block.orphan = true;
+            if saved_block.hash == block.hash {
+                warn!("Block already saved at height {}", block.height);
+                return Ok(());
+            }
+
+            saved_block.orphan = true;
 
             // save block
-            let key = self.get_key(StoreKey::BlockByHash(block.hash));
-            self.store.set(key, block, None)?;
+            let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
+            self.store.set(key, saved_block, None)?;
         }
 
         //Create new entry for the new block
@@ -174,5 +184,17 @@ impl StoreClient for IndexerStore {
         } else {
             Ok(None)
         }
+    }
+
+    fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerStoreError> {
+        let key = self.get_key(StoreKey::HeightToSync);
+        let height = self.store.get(key)?.unwrap_or(0);
+        Ok(height)
+    }
+
+    fn save_height_to_sync(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::HeightToSync);
+        self.store.set(key, height, None)?;
+        Ok(())
     }
 }
