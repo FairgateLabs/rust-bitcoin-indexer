@@ -29,4 +29,7 @@ pub enum IndexerError {
 
     #[error("Checkpoint height is ahead of blockchain height")]
     CheckpointHeightAheadOfBlockchainHeight,
+
+    #[error("Block not found")]
+    BlockNotFound,
 }
