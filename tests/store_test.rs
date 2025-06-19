@@ -1,26 +1,14 @@
-use std::{rc::Rc, str::FromStr};
-
-use bitcoin::{absolute::LockTime, key::rand, transaction::Version, BlockHash, Transaction};
-use bitcoin_indexer::store::{IndexerStore, StoreClient};
+use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction};
+use bitcoin_indexer::store::StoreClient;
 use bitvmx_bitcoin_rpc::types::{BlockInfo, FullBlock};
-use storage_backend::{storage::Storage, storage_config::StorageConfig};
+use std::str::FromStr;
 
-fn generate_random_string() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    (0..10).map(|_| rng.gen_range('a'..='z')).collect()
-}
+use crate::utils::{clear_output, get_indexer_store};
+mod utils;
 
 #[test]
 fn get_best_block_test() -> Result<(), anyhow::Error> {
-    //This is not a test, is just a way to call methods easily.
-    let path = format!(
-        "test_output/get_best_block_height_test/{}",
-        generate_random_string()
-    );
-    let config = StorageConfig::new(path, None);
-    let storage = Rc::new(Storage::new(&config)?);
-    let indexer_store = IndexerStore::new(storage)?;
+    let indexer_store = get_indexer_store();
     let height = indexer_store.get_best_block()?;
     assert_eq!(height, None);
 
@@ -46,7 +34,7 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
     };
 
     //Insert block at height 1 and check best block
-    indexer_store.save_block(&block_1)?;
+    indexer_store.save_new_best_block(&block_1)?;
     let best_block = indexer_store.get_best_block()?;
     assert_eq!(best_block, Some(expected_block));
 
@@ -64,7 +52,7 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
     };
 
     //Insert block at height 2 and check best block
-    indexer_store.save_block(&block_2)?;
+    indexer_store.save_new_best_block(&block_2)?;
     let best_block = indexer_store.get_best_block()?;
 
     let expected_block_2 = FullBlock {
@@ -78,20 +66,18 @@ fn get_best_block_test() -> Result<(), anyhow::Error> {
     assert_eq!(best_block, Some(expected_block_2.clone()));
 
     //Insert block at height 1 again and check best block
-    indexer_store.save_block(&block_1)?;
+    indexer_store.save_new_best_block(&block_1)?;
     let block_again = indexer_store.get_best_block()?;
     assert_eq!(block_again, Some(expected_block_2));
+
+    clear_output();
 
     Ok(())
 }
 
 #[test]
 fn save_block_test() -> Result<(), anyhow::Error> {
-    //This is not a test, is just a way to call methods easily.
-    let path = format!("test_output/save_block_test/{}", generate_random_string());
-    let config = StorageConfig::new(path, None);
-    let storage = Rc::new(Storage::new(&config)?);
-    let indexer_store = IndexerStore::new(storage)?;
+    let indexer_store = get_indexer_store();
 
     let block_hash_1 =
         BlockHash::from_str("0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7a")
@@ -109,7 +95,7 @@ fn save_block_test() -> Result<(), anyhow::Error> {
     };
 
     //Insert block_1 and check get_block_by_hash and get_block_hash_by_height
-    indexer_store.save_block(&block_1)?;
+    indexer_store.save_new_best_block(&block_1)?;
     let saved_block_1 = indexer_store.get_block_by_hash(&block_hash_1)?.unwrap();
     assert_eq!(saved_block_1.hash, block_1.hash);
     assert_eq!(saved_block_1.height, block_1.height);
@@ -132,7 +118,7 @@ fn save_block_test() -> Result<(), anyhow::Error> {
     };
 
     //Insert block_1 at the same height 1 check get_block_by_hash and get_block_hash_by_height
-    indexer_store.save_block(&new_block_1)?;
+    indexer_store.save_new_best_block(&new_block_1)?;
     let saved_new_block_1 = indexer_store.get_block_by_hash(&block_hash_new_1)?.unwrap();
     assert_eq!(saved_new_block_1.hash, new_block_1.hash);
     assert_eq!(saved_new_block_1.height, new_block_1.height);
@@ -152,15 +138,14 @@ fn save_block_test() -> Result<(), anyhow::Error> {
     let block_hash = indexer_store.get_block_hash_by_height(1)?.unwrap();
     assert_eq!(block_hash, new_block_1.hash);
 
+    clear_output();
+
     Ok(())
 }
 
 #[test]
 fn get_tx_info_test() -> Result<(), anyhow::Error> {
-    let path = format!("test_output/get_tx_info_test/{}", generate_random_string());
-    let config = StorageConfig::new(path, None);
-    let storage = Rc::new(Storage::new(&config)?);
-    let indexer_store = IndexerStore::new(storage)?;
+    let indexer_store = get_indexer_store();
 
     let block_hash_1 =
         BlockHash::from_str("0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7a")
@@ -186,7 +171,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
         txs: vec![tx.clone()],
     };
     //1) Save block_1 and check get_tx_info method, transaction with tx_id should exist
-    indexer_store.save_block(&block_1)?;
+    indexer_store.save_new_best_block(&block_1)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
     assert_eq!(tx_info.block_height, block_1.height);
@@ -210,7 +195,7 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     //A block with the same height was inserted, it means that there was an reorganization and transaction was moved to meempool.
     // Then transaction was not mined. But we keep in our database that the transaction was seen.
 
-    indexer_store.save_block(&new_block_1)?;
+    indexer_store.save_new_best_block(&new_block_1)?;
 
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
@@ -231,12 +216,14 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     };
 
     //3) Insert new_block_1_again and check get_tx_info, transaction tx_id should exist again an not be orphan anymore. It was included in a new block at same height
-    indexer_store.save_block(&new_block_1_again)?;
+    indexer_store.save_new_best_block(&new_block_1_again)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
     assert_eq!(tx_info.block_height, new_block_1_again.height);
     assert_eq!(tx_info.orphan, false);
     assert_eq!(tx_info.block_hash, new_block_1_again.hash);
+
+    clear_output();
 
     Ok(())
 }
