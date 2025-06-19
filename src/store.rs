@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
+use crate::types::{FullBlock, TransactionInfo};
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
-use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo, FullBlock, TransactionInfo};
+use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo};
 use mockall::automock;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
@@ -155,34 +156,34 @@ impl StoreClient for IndexerStore {
         Ok(block)
     }
 
-    // Check if a transaction exists and return its block height if found.
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
         let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key)?;
 
         if let Some((tx, block_hash)) = tx_data {
-            let block = match self.get_block_by_hash(&block_hash)? {
+            let mut block_info = match self.get_block_by_hash(&block_hash)? {
                 Some(block) => block,
                 None => return Err(IndexerStoreError::BlockNotFound),
             };
 
-            let best_block = self.get_best_block()?;
+            let best_block_height = self.get_best_height()?.unwrap_or_default();
 
-            let best_block_height = match best_block {
-                Some(block) => block.height,
-                None => 0,
-            };
+            let mut confirmations = best_block_height
+                .saturating_sub(block_info.height)
+                .saturating_add(1);
 
-            let tx = TransactionInfo {
+            // If the block is orphaned or its height is greater than the best block height,
+            // this indicates a reorg or block invalidation where the blockchain has reverted.
+            if block_info.orphan || block_info.height > best_block_height {
+                confirmations = 0;
+                block_info.orphan = true;
+            }
+
+            Ok(Some(TransactionInfo {
                 tx,
-                block_height: block.height,
-                block_hash,
-                orphan: block.orphan,
-                confirmations: best_block_height
-                    .saturating_sub(block.height)
-                    .saturating_add(1),
-            };
-            Ok(Some(tx))
+                block_info,
+                confirmations,
+            }))
         } else {
             Ok(None)
         }

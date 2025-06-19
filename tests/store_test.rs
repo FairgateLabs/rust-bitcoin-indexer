@@ -1,6 +1,6 @@
 use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction};
-use bitcoin_indexer::store::StoreClient;
-use bitvmx_bitcoin_rpc::types::{BlockInfo, FullBlock};
+use bitcoin_indexer::{store::StoreClient, types::FullBlock};
+use bitvmx_bitcoin_rpc::types::BlockInfo;
 use std::str::FromStr;
 
 use crate::utils::{clear_output, get_indexer_store};
@@ -174,9 +174,9 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     indexer_store.save_new_best_block(&block_1)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_height, block_1.height);
-    assert_eq!(tx_info.orphan, false);
-    assert_eq!(tx_info.block_hash, block_1.hash);
+    assert_eq!(tx_info.block_info.height, block_1.height);
+    assert_eq!(tx_info.block_info.orphan, false);
+    assert_eq!(tx_info.block_info.hash, block_1.hash);
     assert_eq!(tx_info.confirmations, 1);
 
     //Creating a new block for height 1
@@ -199,9 +199,9 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
 
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_height, block_1.height);
-    assert_eq!(tx_info.orphan, true);
-    assert_eq!(tx_info.block_hash, block_1.hash);
+    assert_eq!(tx_info.block_info.height, block_1.height);
+    assert_eq!(tx_info.block_info.orphan, true);
+    assert_eq!(tx_info.block_info.hash, block_1.hash);
 
     // Create new block
     let block_hash_1 =
@@ -219,9 +219,9 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     indexer_store.save_new_best_block(&new_block_1_again)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
     assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_height, new_block_1_again.height);
-    assert_eq!(tx_info.orphan, false);
-    assert_eq!(tx_info.block_hash, new_block_1_again.hash);
+    assert_eq!(tx_info.block_info.height, new_block_1_again.height);
+    assert_eq!(tx_info.block_info.orphan, false);
+    assert_eq!(tx_info.block_info.hash, new_block_1_again.hash);
 
     clear_output();
 
