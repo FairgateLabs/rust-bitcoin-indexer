@@ -1,6 +1,7 @@
 use crate::{
     errors::IndexerError,
     store::{IndexerStore, StoreClient},
+    types::{FullBlock, TransactionInfo},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
@@ -190,34 +191,15 @@ where
     }
 
     fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError> {
-        let blockchain_height = self.bitcoin_client.get_best_block()?;
-        Ok(blockchain_height)
+        Ok(self.bitcoin_client.get_best_block()? as BlockHeight)
     }
 
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
-        let block = self.store.get_best_block()?;
-        Ok(block)
+        Ok(self.store.get_best_block()?)
     }
 
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
-        let tx_info = self.store.get_tx_info(tx_id)?;
-        let best_block = self.get_best_block()?;
-
-        if tx_info.is_none() || best_block.is_none() {
-            return Ok(None);
-        }
-
-        let best_block = best_block.unwrap();
-        let mut tx_info = tx_info.unwrap();
-
-        if tx_info.block_height > best_block.height {
-            tx_info.orphan = true;
-            tx_info.confirmations = 0;
-        } else {
-            tx_info.confirmations = best_block.height - tx_info.block_height + 1;
-        }
-
-        return Ok(Some(tx_info));
+        Ok(self.store.get_tx_info(tx_id)?)
     }
 
     fn tick(&self) -> Result<(), IndexerError> {
