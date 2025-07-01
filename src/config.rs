@@ -11,7 +11,7 @@ pub struct IndexerConfig {
     pub log_level: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct IndexerConstants {
     pub checkpoint_height: Option<u32>,
 }
