@@ -1,5 +1,5 @@
 use crate::{
-    config::IndexerConstants,
+    config::IndexerSettings,
     errors::IndexerError,
     store::{IndexerStore, StoreClient},
     types::{FullBlock, TransactionInfo},
@@ -35,9 +35,9 @@ where
     pub fn new(
         bitcoin_client: B,
         store: Rc<IndexerStore>,
-        constants: Option<IndexerConstants>,
+        settings: Option<IndexerSettings>,
     ) -> Result<Self, IndexerError> {
-        let constants = constants.unwrap_or_default();
+        let settings = settings.unwrap_or_default();
 
         // The highest block height that has already been synchronized and stored in the storage.
         let indexed_height = store.get_best_block()?.map(|block| block.height);
@@ -84,7 +84,7 @@ where
                         return Err(IndexerError::IndexedBlockHashMismatch);
                     }
 
-                    match constants.checkpoint_height {
+                    match settings.checkpoint_height {
                         Some(checkpoint) => {
                             if checkpoint > blockchain_height {
                                 error!(
@@ -122,7 +122,7 @@ where
                     }
                 }
             }
-            None => match constants.checkpoint_height {
+            None => match settings.checkpoint_height {
                 Some(checkpoint) => {
                     if blockchain_height < checkpoint {
                         let error =

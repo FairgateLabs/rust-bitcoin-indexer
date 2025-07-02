@@ -8,7 +8,7 @@ bitcoin:
     password: rpcpassword
     wallet: test_wallet
 
-constants:
+settings:
     checkpoint_height: 1
 
 # possible values: error | warn | info | debug | trace

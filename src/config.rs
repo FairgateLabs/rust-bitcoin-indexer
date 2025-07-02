@@ -1,4 +1,4 @@
-use crate::constants::DEFAULT_CHECKPOINT_HEIGHT;
+use crate::settings::DEFAULT_CHECKPOINT_HEIGHT;
 use bitvmx_bitcoin_rpc::rpc_config::RpcConfig;
 use serde::Deserialize;
 use storage_backend::storage_config::StorageConfig;
@@ -7,24 +7,24 @@ use storage_backend::storage_config::StorageConfig;
 pub struct IndexerConfig {
     pub storage: StorageConfig,
     pub bitcoin: RpcConfig,
-    pub constants: Option<IndexerConstants>,
+    pub settings: Option<IndexerSettings>,
     pub log_level: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct IndexerConstants {
+pub struct IndexerSettings {
     pub checkpoint_height: Option<u32>,
 }
 
-impl IndexerConstants {
+impl IndexerSettings {
     pub fn new(checkpoint_height: Option<u32>) -> Self {
         Self { checkpoint_height }
     }
 }
 
-impl Default for IndexerConstants {
+impl Default for IndexerSettings {
     fn default() -> Self {
-        IndexerConstants {
+        IndexerSettings {
             checkpoint_height: Some(DEFAULT_CHECKPOINT_HEIGHT),
         }
     }
