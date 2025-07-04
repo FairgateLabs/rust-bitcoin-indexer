@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin::Network;
 use bitcoin_indexer::{
-    config::ConfigIndexer,
+    config::IndexerConfig,
     indexer::{Indexer, IndexerApi},
     store::IndexerStore,
 };
@@ -16,7 +16,7 @@ use storage_backend::storage::Storage;
 use tracing::info;
 
 fn main() -> Result<(), anyhow::Error> {
-    let config = settings::load::<ConfigIndexer>()?;
+    let config = settings::load::<IndexerConfig>()?;
 
     let log_level = match config.log_level {
         Some(level) => level.parse().unwrap_or(tracing::Level::INFO),
@@ -45,7 +45,7 @@ fn main() -> Result<(), anyhow::Error> {
     info!("Chain best block at {}H", blockchain_height);
     let storage = Rc::new(Storage::new(&config.storage)?);
     let indexer_store = Rc::new(IndexerStore::new(storage)?);
-    let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), None)?;
+    let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), config.settings)?;
 
     for _ in 0..150 {
         indexer.tick()?;

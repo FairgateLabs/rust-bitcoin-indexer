@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin::Network;
 use bitcoin_indexer::{
-    config::ConfigIndexer,
+    config::IndexerConfig,
     indexer::{Indexer, IndexerApi},
 };
 use bitcoind::bitcoind::Bitcoind;
@@ -16,7 +16,7 @@ use crate::utils::{clear_output, get_indexer_store, get_random_pubkey};
 fn reorganization_test() -> Result<(), anyhow::Error> {
     clear_output();
 
-    let config = settings::load::<ConfigIndexer>()?;
+    let config = settings::load::<IndexerConfig>()?;
 
     let log_level = match config.log_level {
         Some(level) => level.parse().unwrap_or(tracing::Level::ERROR),

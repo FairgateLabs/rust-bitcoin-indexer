@@ -1,5 +1,6 @@
 use bitcoin::BlockHash;
 use bitcoin_indexer::{
+    config::IndexerSettings,
     indexer::{Indexer, IndexerApi},
     store::StoreClient,
     types::FullBlock,
@@ -44,7 +45,11 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
         .with(eq(1000))
         .returning(move |_| Ok(Some(block_info.clone())));
 
-    let indexer = Indexer::new(bitcoin_client, store, Some(1000))?;
+    let indexer = Indexer::new(
+        bitcoin_client,
+        store,
+        Some(IndexerSettings::new(Some(1000))),
+    )?;
     let best_block = indexer.get_best_block()?;
     assert_eq!(best_block.unwrap().height, 1000);
 
@@ -130,7 +135,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(0))
             .returning(move |_| Ok(Some(block_0.clone())));
 
-        let indexer = Indexer::new(bitcoin_client, store, None)?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         // Should have saved height_to_sync = 0
         assert_eq!(indexer.get_best_height()?, Some(0));
     }
@@ -151,7 +156,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(11))
             .returning(move |_| Ok(Some(block_11_clone.clone())));
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(11))?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(11))))?;
         assert_eq!(indexer.get_best_height()?, Some(11));
     }
 
@@ -171,7 +176,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_clone.clone())));
 
-        let result = Indexer::new(bitcoin_client, store, Some(20));
+        let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(20))));
         assert!(result.is_err());
     }
 
@@ -196,7 +201,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         store.save_last_synced_height(10)?;
 
-        let indexer = Indexer::new(bitcoin_client, store, None)?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         assert_eq!(indexer.get_best_height()?, Some(10));
         assert_eq!(indexer.get_height_to_sync()?, 10);
     }
@@ -224,7 +229,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         store.save_last_synced_height(11)?;
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(10))?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
         assert_eq!(indexer.get_best_height()?, Some(10));
         assert_eq!(indexer.get_height_to_sync()?, 10);
     }
@@ -253,7 +258,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(12))
             .returning(move |_| Ok(Some(block_12_clone.clone())));
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(12))?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
         assert_eq!(indexer.get_best_height()?, Some(12));
         assert_eq!(indexer.get_height_to_sync()?, 12);
     }
@@ -273,7 +278,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .returning(move |_| Ok(Some(block_12.clone())));
         store.save_last_synced_height(12)?;
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(12))?;
+        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
         assert_eq!(indexer.get_best_height()?, Some(12));
         assert_eq!(indexer.get_height_to_sync()?, 12);
     }
