@@ -34,7 +34,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     bitcoind.start()?;
 
     let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
-    let wallet = bitcoin_client.init_wallet(Network::Regtest, "test_wallet")?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let indexer_store = get_indexer_store();
     let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), None)?;
     let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
