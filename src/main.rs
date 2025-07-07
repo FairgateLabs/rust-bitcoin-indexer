@@ -1,5 +1,4 @@
 use anyhow::Result;
-use bitcoin::Network;
 use bitcoin_indexer::{
     config::IndexerConfig,
     indexer::{Indexer, IndexerApi},
@@ -34,7 +33,7 @@ fn main() -> Result<(), anyhow::Error> {
     bitcoind.start()?;
 
     let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
-    let wallet = bitcoin_client.init_wallet(Network::Regtest, "test_wallet")?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
 
     info!("Mining 100 blocks to wallet");
     bitcoin_client.mine_blocks_to_address(100, &wallet)?;
