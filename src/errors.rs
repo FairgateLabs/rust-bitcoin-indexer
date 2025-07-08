@@ -3,7 +3,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum IndexerStoreError {
-    #[error("Error with Store client")]
+    #[error("Error with the store client")]
     StoreError(#[from] storage_backend::error::StorageError),
 
     #[error("Block not found")]
@@ -12,19 +12,19 @@ pub enum IndexerStoreError {
 
 #[derive(Error, Debug)]
 pub enum IndexerError {
-    #[error("Error with Bitcoin client")]
+    #[error("Error with the Bitcoin client")]
     BitcoinClientError(#[from] BitcoinClientError),
 
-    #[error("Error with Store")]
+    #[error("Error with the store")]
     StoreError(#[from] IndexerStoreError),
 
     #[error("Inconsistent blockchain state")]
     InconsistentBlockchain,
 
-    #[error("Indexed block hash mismatch blockchain hash")]
+    #[error("Indexed block hash does not match blockchain hash")]
     IndexedBlockHashMismatch,
 
-    #[error("Database corrupted")]
+    #[error("Database is corrupted")]
     DatabaseCorrupted,
 
     #[error("Checkpoint height is ahead of blockchain height")]

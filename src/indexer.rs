@@ -19,12 +19,32 @@ where
 
 #[automock]
 pub trait IndexerApi {
+    /// Checks if the indexer has indexed the entire blockchain and is at the latest block.
+    /// Returns `Ok(true)` if ready, `Ok(false)` if not, or an `IndexerError` if an error occurs.
     fn is_ready(&self) -> Result<bool, IndexerError>;
+
+    /// Processes the next block in the blockchain.
+    /// Returns `Ok(())` if successful, or an `IndexerError` if an error occurs during processing.
     fn tick(&self) -> Result<(), IndexerError>;
+
+    /// Retrieves the best (most recent) block that has been indexed.
+    /// Returns `Ok(Some(FullBlock))` if a block is found, `Ok(None)` if no block was indexed, or an `IndexerError` if an error occurs.
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
+
+    /// Retrieves the height of the best (most recent) block that has been indexed.
+    /// Returns `Ok(Some(BlockHeight))` if a height is found, `Ok(None)` if no block is indexed, or an `IndexerError` if an error occurs.
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError>;
+
+    /// Retrieves the current best block height from the Bitcoin blockchain.
+    /// Returns `Ok(BlockHeight)` with the current blockchain height, or an `IndexerError` if an error occurs.
     fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError>;
+
+    /// Determines the next block height that needs to be synchronized.
+    /// Returns `Ok(BlockHeight)` with the height to sync, or an `IndexerError` if an error occurs.
     fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerError>;
+
+    /// Retrieves transaction information for a given transaction ID.
+    /// Returns `Ok(Some(TransactionInfo))` if the transaction is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
 }
 
@@ -50,7 +70,7 @@ where
         match indexed_height {
             Some(indexer_height) => {
                 info!("Last indexed block is {:?}H", indexer_height);
-                // Here we have to validate the indexed_height is correct againt the blockchain_height
+                // Here we have to validate that the indexed_height is correct against the blockchain_height
                 if blockchain_height < indexer_height {
                     error!(
                         "Blockchain height is behind the indexed height at height {}. Blockchain height: {}, Indexed height: {}",
@@ -60,7 +80,7 @@ where
                     );
                     return Err(IndexerError::InconsistentBlockchain);
                 } else {
-                    // We have to balidate the hash of the indexed_height is correct
+                    // We have to validate that the hash of the indexed_height is correct
                     let blockchain_block = bitcoin_client.get_block_by_height(&indexer_height)?;
 
                     if blockchain_block.is_none() {
@@ -76,7 +96,7 @@ where
 
                     if blockchain_block_hash != indexed_block_hash.unwrap() {
                         error!(
-                            "Indexed block hash mismatch blockchain hash at height {}. Indexed block hash: {:?}, Blockchain block hash: {:?}",
+                            "Indexed block hash does not match blockchain hash at height {}. Indexed block hash: {:?}, Blockchain block hash: {:?}",
                             indexer_height,
                             indexed_block_hash.unwrap(),
                             blockchain_block_hash
@@ -99,7 +119,7 @@ where
                                     "CHECKPOINT_HEIGHT({}) is behind last IndexerHeight({})",
                                     checkpoint, height_to_sync
                                 );
-                                info!("Using CHECKPOINT_HEIGHT({}) to start to sync", checkpoint);
+                                info!("Using CHECKPOINT_HEIGHT({}) to start syncing", checkpoint);
                             }
 
                             if checkpoint > indexer_height {
@@ -107,11 +127,11 @@ where
                                     "CHECKPOINT_HEIGHT({}) is ahead of last IndexerHeight({})",
                                     checkpoint, indexer_height
                                 );
-                                info!("Using IndexerHeight({}) to start to sync", indexer_height);
+                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
                             }
 
                             if checkpoint == indexer_height {
-                                info!("Using IndexerHeight({}) to start to sync", indexer_height);
+                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
                             }
 
                             height_to_sync = checkpoint;
@@ -131,12 +151,12 @@ where
                         return Err(IndexerError::InconsistentBlockchain);
                     }
 
-                    info!("Start to sync from CHECKPOINT_HEIGHT({})", checkpoint);
+                    info!("Starting to sync from CHECKPOINT_HEIGHT({})", checkpoint);
 
                     height_to_sync = checkpoint;
                 }
                 None => {
-                    info!("Start to sync from genesis block");
+                    info!("Starting to sync from genesis block");
                     height_to_sync = 0;
                 }
             },
@@ -144,7 +164,7 @@ where
 
         store.save_last_synced_height(height_to_sync)?;
 
-        // Check if the block exists in the storage. If not save it.
+        // Check if the block exists in the storage. If not, save it.
         let block_hash = store.get_block_hash_by_height(height_to_sync)?;
 
         if block_hash.is_none() {

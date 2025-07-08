@@ -4,8 +4,7 @@ version = "0.1.5"
 edition = "2021"
 description = "Bitcoin indexer"
 keywords = ["bitcoin", "indexer"]
-homepage = "https://github.com/FairgateLabs/rust-bitcoin-indexer"
-repository = "https://github.com/FairgateLabs/rust-bitcoin-indexer"
+repository = "https://github.com/fairgateLabs/rust-bitcoin-indexer"
 readme = "README.md"
 
 

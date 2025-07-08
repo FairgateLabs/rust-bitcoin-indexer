@@ -12,7 +12,7 @@ mod utils;
 use crate::utils::{clear_output, get_indexer_store, get_random_pubkey};
 
 #[test]
-#[ignore = "This test is ignored because it uses real bitcoin node, that is not available in CI"]
+#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn reorganization_test() -> Result<(), anyhow::Error> {
     clear_output();
 
@@ -52,17 +52,17 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     assert_eq!(bitcoin_client.get_best_block()?, 110);
     assert_eq!(indexer.get_height_to_sync()?, 110);
 
-    info!("Making 3 more ticks to ensure that indexer do not process the next block");
+    info!("Making 3 more ticks to ensure that the indexer does not process the next block");
     for _ in 0..3 {
         indexer.tick()?;
     }
 
-    info!("Checking that indexer is at height 110 and the blockchain is at height 110");
+    info!("Checking that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
     assert_eq!(indexer.get_height_to_sync()?, 110);
 
-    info!("Mining 10 blocks more");
+    info!("Mining 10 more blocks");
     bitcoin_client.mine_blocks_to_address(10, &wallet)?;
 
     info!("Making 10 more ticks");
@@ -70,7 +70,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
         indexer.tick()?;
     }
 
-    info!("Checking that indexer is at height 120 and the blockchain is at height 120");
+    info!("Checking that the indexer is at height 120 and the blockchain is at height 120");
     assert_eq!(indexer.get_best_height()?, Some(120));
     assert_eq!(bitcoin_client.get_best_block()?, 120);
     assert_eq!(indexer.get_height_to_sync()?, 120);
@@ -78,11 +78,11 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Invalidating the last 10 blocks");
     bitcoin_client.invalidate_block(&bitcoin_client.get_block_by_height(&111)?.unwrap().hash)?;
 
-    info!("Making 2 tick");
+    info!("Making 2 ticks");
     indexer.tick()?;
     indexer.tick()?;
 
-    info!("Checking after ticks indexer is at height 110 and the blockchain is at height 110");
+    info!("Checking after ticks that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
     assert_eq!(indexer.get_height_to_sync()?, 110);
@@ -90,12 +90,12 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Making 2 more ticks");
     indexer.tick()?;
 
-    info!("Checking that indexer is at height 110 and the blockchain is at height 110");
+    info!("Checking that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
     assert_eq!(indexer.get_height_to_sync()?, 110);
 
-    info!("Mining 10 more blocks >>>>");
+    info!("Mining 10 more blocks");
     let user_pubkey = get_random_pubkey();
     let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest);
     bitcoin_client.mine_blocks_to_address(10, &wallet)?;
@@ -108,18 +108,18 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     assert_eq!(bitcoin_client.get_best_block()?, 120);
     assert_eq!(indexer.get_height_to_sync()?, 120);
 
-    info!("Invalidating 30 blocks and mining 50 blocks more, then indexer will reorg + see 20 blocks ahead.");
+    info!("Invalidating 30 blocks and mining 50 blocks more, then the indexer will reorg and see 20 blocks ahead.");
     bitcoin_client.invalidate_block(&bitcoin_client.get_block_by_height(&91)?.unwrap().hash)?;
     let user_pubkey = get_random_pubkey();
     let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest);
     bitcoin_client.mine_blocks_to_address(50, &wallet)?;
 
-    info!("Making 80 ticks, to ensure that indexer roll back and process new blocks");
+    info!("Making 80 ticks to ensure that the indexer rolls back and processes new blocks");
     for _ in 0..80 {
         indexer.tick()?;
     }
 
-    info!("Checking that indexer is at height 140 and the blockchain is at height 140");
+    info!("Checking that the indexer is at height 140 and the blockchain is at height 140");
     assert_eq!(indexer.get_best_height()?, Some(140));
     assert_eq!(bitcoin_client.get_best_block()?, 140);
     assert_eq!(indexer.get_height_to_sync()?, 140);

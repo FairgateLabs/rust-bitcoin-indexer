@@ -2,56 +2,85 @@
 
 ## Overview
 
-The Bitcoin Indexer is a Rust-based tool designed to extract and store block and transaction IDs from the Bitcoin blockchain. This project aims to provide a simple and efficient way to index the blockchain starting from a specific height and save the gathered data into a rockdb storage for further analysis and processing.
+The Bitcoin Indexer is a Rust-based library designed to extract and store block and transaction IDs from the Bitcoin blockchain. This project provides a simple and efficient way to index the blockchain starting from a specific height and save the gathered data into a RockDB storage for further analysis and processing.
 
-## Key Features
+## Features
 
-- **Block and Transaction ID Extraction**: Retrieves and records block and transaction IDs from the Bitcoin blockchain.
-- **Configurable Start Height**: Allows indexing to begin from a specified block height.
-- **File Storage**: Saves the extracted data into a rockdb storage for easy access and further use.
+- 🏷️ **Block and Transaction Data**: Retrieves and records block and transaction IDs from the Bitcoin blockchain.
+- 📏 **Configurable Start Height**: Allows indexing to begin from a specified block height.
+- 💾 **File Storage**: Saves the extracted data into a RockDB storage for easy access and further use.
+- ⏱️ **Synchronous Processing**: Processes each block and transaction synchronously, ensuring data consistency with each tick.
 
-## Installation
-Clone the repository and initialize the submodules:
-```bash
-$ git clone git@github.com:FairgateLabs/rust-bitcoin-indexer
-```
-### Tests
+## Methods 
+The `IndexerApi` trait provides several methods to interact with the Bitcoin Indexer:
 
-If you make some changes please run tests to verify everything still working as expected.
+- **is_ready**: Checks if the indexer has indexed the entire blockchain and is at the latest block. 
 
-```
-cargo test
-```
+- **tick**: Processes the next block in the blockchain. 
 
-## Testing Locally
+- **get_best_block**: Retrieves the best (most recent) block that has been indexed. 
 
-**Pre-requisites:**
-1. Install Docker engine
-2. Install [ACT](https://nektosact.com/installation/index.html)
-3. Get the GitHub token, needed to fetch repositories
-4. Remove all commented code in **src/tests/docker_integration_test.rs**
+- **get_best_height**: Retrieves the height of the best (most recent) block that has been indexed.
 
-**Run all tests:**
+- **get_blockchain_best_height**: Retrieves the current best block height from the Bitcoin blockchain. 
+
+- **get_height_to_sync**: Determines the next block height that needs to be synchronized.  
+  
+- **get_tx**: Retrieves transaction information for a given transaction ID. 
+
+## Usage
 ```rust
-$cargo test
+  // Load configuration
+  let config = ...
+
+  // Initialize Bitcoin client
+  let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+
+  // Initialize storage and indexer store
+  let storage = Rc::new(IndexerStore::new(&config.storage)?);
+  let indexer_store = Rc::new(IndexerStore::new(storage)?);
+
+  // Create an Indexer instance
+  let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), config.settings)?;
+
+  // Check if the indexer is ready
+  if indexer.is_ready()? {
+      println!("Indexer is ready and at the latest block.");
+  } else {
+      println!("Indexer is not yet at the latest block.");
+  }
+
+  // Process the next block
+  indexer.tick()?;
+
+  // Retrieve the best block
+  if let Some(best_block) = indexer.get_best_block()? {
+      println!("Best block: {:?}", best_block);
+  }
+
+  // Retrieve the best block height
+  if let Some(best_height) = indexer.get_best_height()? {
+      println!("Best block height: {}", best_height);
+  }
+
+  // Retrieve the current blockchain best height
+  let blockchain_best_height = indexer.get_blockchain_best_height()?;
+  println!("Blockchain best height: {}", blockchain_best_height);
+
+  // Determine the next block height to sync
+  let height_to_sync = indexer.get_height_to_sync()?;
+  println!("Next block height to sync: {}", height_to_sync);
+
+  // Example transaction ID (replace with a real one for actual use)
+  let tx_id = "some_tx_id";
+  if let Some(tx_info) = indexer.get_tx(&tx_id.parse()?)? {
+      println!("Transaction info: {:?}", tx_info);
+  }
+
 ```
 
-**Run job locally**
+## Development Setup
 
-Some `act` versions might have issues caching the templates versions and not using the last one and also with some of the authentication tokens, so before locally executing the tests, please do the following:
-
-In project root:
-
-If you're using a Linux Based OS:
-```bash
-rm -rf ~/.cache/act
-```
-If you're using windows
-```powershell
-Remove-Item -Recurse -Force $env:USERPROFILE\.cache\act
-```
-Then to execute the test use:
-```bash
-$act --pull -s SSH_PRIVATE_KEY="$(cat ~/.ssh/id_rsa)" -s GITHUB_TOKEN="token" -s REPO_ACCESS_TOKEN="token" -j 'local_test'
-```
-The use of the `--verbose` flag at the end of the test execution command is not required but is recomended, since it gives the user a more deep info on the total execution log
+1. Clone the repository
+2. Install dependencies: `cargo build`
+3. Run tests: `cargo test -- --ignored`
