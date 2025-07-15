@@ -84,3 +84,10 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 1. Clone the repository
 2. Install dependencies: `cargo build`
 3. Run tests: `cargo test -- --ignored`
+
+## Contributing
+Contributions are welcome! Please open an issue or submit a pull request on GitHub.
+
+## License
+This project is licensed under the MIT License.
+
