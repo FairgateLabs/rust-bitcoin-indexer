@@ -4,6 +4,11 @@
 
 The Bitcoin Indexer is a Rust-based library designed to extract and store block and transaction IDs from the Bitcoin blockchain. This project provides a simple and efficient way to index the blockchain starting from a specific height and save the gathered data into a RockDB storage for further analysis and processing.
 
+## ⚠️ Disclaimer
+
+This library is currently under development and may not be fully stable.
+It is not production-ready, has not been audited, and future updates may introduce breaking changes without preserving backward compatibility.
+
 ## Features
 
 - 🏷️ **Block and Transaction Data**: Retrieves and records block and transaction IDs from the Bitcoin blockchain.
