@@ -5,7 +5,7 @@ use bitcoin::{
     PublicKey,
 };
 use bitcoin_indexer::store::IndexerStore;
-use std::rc::Rc;
+use std::sync::Arc;
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 
 pub fn generate_random_string() -> String {
@@ -14,16 +14,16 @@ pub fn generate_random_string() -> String {
     (0..10).map(|_| rng.gen_range('a'..='z')).collect()
 }
 
-pub fn get_indexer_store() -> Rc<IndexerStore> {
+pub fn get_indexer_store() -> Arc<IndexerStore> {
     let path = format!(
         "test_output/get_best_block_height_test/{}",
         generate_random_string()
     );
     let config = StorageConfig::new(path, None);
-    let store = Rc::new(Storage::new(&config).unwrap());
+    let store = Arc::new(Storage::new(&config).unwrap());
     let indexer_store = IndexerStore::new(store).unwrap();
 
-    Rc::new(indexer_store)
+    Arc::new(indexer_store)
 }
 
 pub fn clear_output() {

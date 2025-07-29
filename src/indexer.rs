@@ -7,14 +7,14 @@ use crate::{
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
 use mockall::automock;
-use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 pub struct Indexer<B>
 where
     B: BitcoinClientApi,
 {
     pub bitcoin_client: B,
-    pub store: Rc<IndexerStore>,
+    pub store: Arc<IndexerStore>,
 }
 
 #[automock]
@@ -54,7 +54,7 @@ where
 {
     pub fn new(
         bitcoin_client: B,
-        store: Rc<IndexerStore>,
+        store: Arc<IndexerStore>,
         settings: Option<IndexerSettings>,
     ) -> Result<Self, IndexerError> {
         let settings = settings.unwrap_or_default();

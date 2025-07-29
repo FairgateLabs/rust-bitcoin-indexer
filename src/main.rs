@@ -10,7 +10,7 @@ use bitvmx_bitcoin_rpc::{
     types::BlockHeight,
 };
 use bitvmx_settings::settings;
-use std::rc::Rc;
+use std::sync::Arc;
 use storage_backend::storage::Storage;
 use tracing::info;
 
@@ -42,8 +42,8 @@ fn main() -> Result<(), anyhow::Error> {
     let network = bitcoin_client.get_blockchain_info()?.chain;
     info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
-    let storage = Rc::new(Storage::new(&config.storage)?);
-    let indexer_store = Rc::new(IndexerStore::new(storage)?);
+    let storage = Arc::new(Storage::new(&config.storage)?);
+    let indexer_store = Arc::new(IndexerStore::new(storage)?);
     let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), config.settings)?;
 
     for _ in 0..150 {

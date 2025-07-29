@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::errors::IndexerStoreError;
 use crate::types::{FullBlock, TransactionInfo};
@@ -11,7 +11,7 @@ use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
 use tracing::warn;
 pub struct IndexerStore {
-    store: Rc<Storage>,
+    store: Arc<Storage>,
 }
 
 enum StoreKey {
@@ -24,7 +24,7 @@ enum StoreKey {
 }
 
 impl IndexerStore {
-    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerStoreError> {
+    pub fn new(store: Arc<Storage>) -> Result<Self, IndexerStoreError> {
         Ok(Self { store })
     }
 
