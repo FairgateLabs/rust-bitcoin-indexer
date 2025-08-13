@@ -43,6 +43,10 @@ pub trait IndexerApi {
     /// Returns `Ok(BlockHeight)` with the height to sync, or an `IndexerError` if an error occurs.
     fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerError>;
 
+    /// Retrieves a block by its height.
+    /// Returns `Ok(Some(FullBlock))` if the block is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError>;
+
     /// Retrieves transaction information for a given transaction ID.
     /// Returns `Ok(Some(TransactionInfo))` if the transaction is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
@@ -308,5 +312,10 @@ where
         self.store.save_last_synced_height(next_block_height)?;
 
         Ok(())
+    }
+
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
+        let block = self.store.get_block_by_height(height)?;
+        Ok(block)
     }
 }
