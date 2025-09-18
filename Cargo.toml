@@ -19,7 +19,7 @@ url = "2.5.2"
 serde = { version = "1.0.205", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4.3"
-rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend" }
-bitvmx-settings = { path = "../rust-bitvmx-settings" }
-bitvmx-bitcoin-rpc = { path = "../rust-bitvmx-bitcoin-rpc" }
-bitcoind = { path = "../rust-bitcoind" }
+rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", branch = "v.0.0.1" }
+bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", branch = "v.0.0.1" }
+bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", branch = "v.0.0.1" }
+bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", branch = "v.0.0.1" }
