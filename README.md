@@ -91,7 +91,10 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 3. Run tests: `cargo test -- --ignored --test-threads=1`
 
 ## Examples
-- get_estimated_fee_rate - run with `cargo run --example feerate`
+- **get_estimated_fee_rate:**
+    1. Get a node endpoint (including spinning a node for regtest if needed) for your desired network
+    3. Edit `config/development.yaml` with the correct values
+    3. run with `cargo run --example feerate`
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request on GitHub.
