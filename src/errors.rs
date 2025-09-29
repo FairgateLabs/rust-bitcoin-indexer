@@ -32,4 +32,10 @@ pub enum IndexerError {
 
     #[error("Block not found")]
     BlockNotFound,
+
+    #[error("Fee rate can't be estimated")]
+    FeeRateNotEstimated,
+
+    #[error("Indexer is not synchronized")]
+    IndexerNotSynced,
 }
