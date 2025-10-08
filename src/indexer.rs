@@ -380,7 +380,7 @@ fn estimate_fee_rate<B: BitcoinClientApi>(bitcoin_client: &B, next_block: &Block
         // See https://bitcoincore.org/en/doc/23.0.0/rpc/blockchain/getblock/
 
         let block_tx_count = next_block.txs.len();
-        info!("Transactions count: {}", block_tx_count);
+        tracing::trace!("Transactions count: {}", block_tx_count);
 
         // In a future version we can analyze if the block is full or empty or which %,
         // a block lower than 75% will lead to lower fee rates for next block inclusion
