@@ -27,6 +27,7 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
         orphan: false,
         prev_hash: prev_hash.clone(),
         txs: vec![],
+        estimated_fee_rate: 0,
     };
 
     bitcoin_client
@@ -186,7 +187,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         let store = get_indexer_store();
 
         // Save block_10 as already indexed
-        store.save_new_best_block(&block_10.clone())?;
+        store.save_new_best_block(&block_10.clone(), 0)?;
 
         bitcoin_client
             .expect_get_best_block()
@@ -211,7 +212,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
 
-        store.save_new_best_block(&block_11)?;
+        store.save_new_best_block(&block_11, 0)?;
         bitcoin_client
             .expect_get_best_block()
             .returning(move || Ok(12));
@@ -239,7 +240,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
 
-        store.save_new_best_block(&block_10_clone)?;
+        store.save_new_best_block(&block_10_clone, 0)?;
         bitcoin_client
             .expect_get_best_block()
             .returning(move || Ok(12));
@@ -268,7 +269,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
 
-        store.save_new_best_block(&block_12)?;
+        store.save_new_best_block(&block_12, 0)?;
         bitcoin_client
             .expect_get_best_block()
             .returning(move || Ok(12));

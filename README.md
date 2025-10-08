@@ -16,22 +16,22 @@ It is not production-ready, has not been audited, and future updates may introdu
 - 💾 **File Storage**: Saves the extracted data into a RockDB storage for easy access and further use.
 - ⏱️ **Synchronous Processing**: Processes each block and transaction synchronously, ensuring data consistency with each tick.
 
-## Methods 
+## Methods
 The `IndexerApi` trait provides several methods to interact with the Bitcoin Indexer:
 
-- **is_ready**: Checks if the indexer has indexed the entire blockchain and is at the latest block. 
+- **is_ready**: Checks if the indexer has indexed the entire blockchain and is at the latest block.
 
-- **tick**: Processes the next block in the blockchain. 
+- **tick**: Processes the next block in the blockchain.
 
-- **get_best_block**: Retrieves the best (most recent) block that has been indexed. 
+- **get_best_block**: Retrieves the best (most recent) block that has been indexed.
 
 - **get_best_height**: Retrieves the height of the best (most recent) block that has been indexed.
 
-- **get_blockchain_best_height**: Retrieves the current best block height from the Bitcoin blockchain. 
+- **get_blockchain_best_height**: Retrieves the current best block height from the Bitcoin blockchain.
 
-- **get_height_to_sync**: Determines the next block height that needs to be synchronized.  
-  
-- **get_tx**: Retrieves transaction information for a given transaction ID. 
+- **get_height_to_sync**: Determines the next block height that needs to be synchronized.
+
+- **get_tx**: Retrieves transaction information for a given transaction ID.
 
 ## Usage
 ```rust
@@ -88,7 +88,13 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 
 1. Clone the repository
 2. Install dependencies: `cargo build`
-3. Run tests: `cargo test -- --ignored`
+3. Run tests: `cargo test -- --ignored --test-threads=1`
+
+## Examples
+- **get_estimated_fee_rate:**
+    1. Get a node endpoint (including spinning a node for regtest if needed) for your desired network
+    3. Edit `config/development.yaml` with the correct values
+    3. run with `cargo run --example feerate`
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request on GitHub.

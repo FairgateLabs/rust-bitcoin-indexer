@@ -9,6 +9,7 @@ pub struct FullBlock {
     pub prev_hash: BlockHash,
     pub txs: Vec<Transaction>,
     pub orphan: bool,
+    pub estimated_fee_rate: u64, // in sat/vB
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

@@ -54,7 +54,11 @@ pub trait StoreClient {
         &self,
         height: BlockHeight,
     ) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn save_new_best_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError>;
+    fn save_new_best_block(
+        &self,
+        block: &BlockInfo,
+        estimated_fee_rate: u64,
+    ) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
     fn get_last_synced_height(&self) -> Result<BlockHeight, IndexerStoreError>;
     fn save_last_synced_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
@@ -65,7 +69,11 @@ pub trait StoreClient {
 
 #[automock]
 impl StoreClient for IndexerStore {
-    fn save_new_best_block(&self, block: &BlockInfo) -> Result<(), IndexerStoreError> {
+    fn save_new_best_block(
+        &self,
+        block: &BlockInfo,
+        estimated_fee_rate: u64,
+    ) -> Result<(), IndexerStoreError> {
         let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
 
         if let Some(block_hash) = existing_block_at_height {
@@ -94,6 +102,7 @@ impl StoreClient for IndexerStore {
             prev_hash: block.prev_hash,
             txs: block.txs.clone(),
             orphan: false,
+            estimated_fee_rate,
         };
 
         // 1. Save the block itself under its hash.
