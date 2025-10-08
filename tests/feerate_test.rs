@@ -13,15 +13,20 @@ use utils::get_indexer_store;
 
 #[test]
 fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::Error> {
-    use bitcoin::{absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
+    use bitcoin::{
+        absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn,
+        TxOut,
+    };
     use bitcoin_indexer::indexer::{Indexer, IndexerApi};
     use serde_json::json;
 
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = get_indexer_store();
 
-    let hash = BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash = BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
+    let hash =
+        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
+    let prev_hash =
+        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
 
     // Create 7 transactions with different fee rates
     // Transaction with feerate 1 sat/vbyte: fee = 1 sat, vsize = 1 vbyte
@@ -29,7 +34,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -45,7 +55,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000002")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -61,7 +76,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000003")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000003",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -77,7 +97,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000004")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000004",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -93,7 +118,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000005")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000005",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -109,7 +139,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000006")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000006",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -125,7 +160,12 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000007")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000007",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -140,7 +180,15 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         height: 1000,
         hash: hash.clone(),
         prev_hash: prev_hash.clone(),
-        txs: vec![tx1.clone(), tx2.clone(), tx3.clone(), tx4.clone(), tx5.clone(), tx6.clone(), tx7.clone()],
+        txs: vec![
+            tx1.clone(),
+            tx2.clone(),
+            tx3.clone(),
+            tx4.clone(),
+            tx5.clone(),
+            tx6.clone(),
+            tx7.clone(),
+        ],
     };
 
     // The middle transaction (index 3) is tx4, which should have feerate 4 sat/vbyte
@@ -195,8 +243,10 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = get_indexer_store();
 
-    let hash = BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash = BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
+    let hash =
+        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
+    let prev_hash =
+        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
 
     // Create a simple transaction for the block
     let tx = Transaction {
@@ -255,7 +305,10 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
             // This is expected - test passes
         }
         other_error => {
-            panic!("Expected IndexerError::IndexerNotSynced, but got: {:?}", other_error);
+            panic!(
+                "Expected IndexerError::IndexerNotSynced, but got: {:?}",
+                other_error
+            );
         }
     }
 
@@ -265,14 +318,19 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
 
 #[test]
 fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
-    use bitcoin::{absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
+    use bitcoin::{
+        absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn,
+        TxOut,
+    };
     use bitcoin_indexer::errors::IndexerError;
 
     let mut bitcoin_client = MockBitcoinClient::new();
     let store = get_indexer_store();
 
-    let hash = BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash = BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
+    let hash =
+        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
+    let prev_hash =
+        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
 
     // Create only 2 transactions - this will be less than MIN_BLOCK_TX (5)
     // This will cause the fee estimation to return 0 (ERROR_FEE_RATE)
@@ -280,7 +338,12 @@ fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000001",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -295,7 +358,12 @@ fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
         version: Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint::new(bitcoin::hash_types::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000002")?, 0),
+            previous_output: OutPoint::new(
+                bitcoin::hash_types::Txid::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000002",
+                )?,
+                0,
+            ),
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
             witness: bitcoin::Witness::new(),
@@ -347,7 +415,10 @@ fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
             // This is expected - test passes
         }
         other_error => {
-            panic!("Expected IndexerError::FeeRateNotEstimated, but got: {:?}", other_error);
+            panic!(
+                "Expected IndexerError::FeeRateNotEstimated, but got: {:?}",
+                other_error
+            );
         }
     }
 
@@ -390,12 +461,13 @@ fn test_get_estimated_fee_rate_block_not_found() -> Result<(), anyhow::Error> {
             // This is expected - test passes
         }
         other_error => {
-            panic!("Expected IndexerError::BlockNotFound, but got: {:?}", other_error);
+            panic!(
+                "Expected IndexerError::BlockNotFound, but got: {:?}",
+                other_error
+            );
         }
     }
 
     clear_output();
     Ok(())
 }
-
-

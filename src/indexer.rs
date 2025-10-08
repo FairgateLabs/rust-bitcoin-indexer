@@ -334,7 +334,8 @@ where
         let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &next_block)?;
 
         // Save the next block to the local store.
-        self.store.save_new_best_block(&next_block, estimated_fee_rate)?;
+        self.store
+            .save_new_best_block(&next_block, estimated_fee_rate)?;
         // Update the last synced height to reflect the new block.
         self.store.save_last_synced_height(next_block_height)?;
 
@@ -345,8 +346,6 @@ where
         let block = self.store.get_block_by_height(height)?;
         Ok(block)
     }
-
-
 }
 
 /// Estimates the fee rate for the next block based on the middle transaction in the provided block.
@@ -367,88 +366,106 @@ where
 /// - Using `getblock` with verbosity 3 (when supported by bitcoincore-rpc)
 /// - Calculating median or average fee rates from multiple transactions
 /// - Considering block fullness percentage for more accurate predictions
-fn estimate_fee_rate<B: BitcoinClientApi>(bitcoin_client: &B, next_block: &BlockInfo) -> Result<u64, IndexerError> {
+fn estimate_fee_rate<B: BitcoinClientApi>(
+    bitcoin_client: &B,
+    next_block: &BlockInfo,
+) -> Result<u64, IndexerError> {
+    // Const might be settings in the future
+    const MIN_BLOCK_TX: usize = 5;
+    const ERROR_FEE_RATE: u64 = 0; // sat/vB
+    const DEFAULT_MIN_FEE_RATE: u64 = 1; // sat/vB
 
-        // Const might be settings in the future
-        const MIN_BLOCK_TX: usize = 5;
-        const ERROR_FEE_RATE: u64 = 0; // sat/vB
-        const DEFAULT_MIN_FEE_RATE: u64 = 1; // sat/vB
+    // TODO use get block with verbosity 3 would be a nice optimization (not yet supported by bitcoincore-rpc),
+    // it will remove the need to call again getrawtransaction
+    // with that approach we can cheaply calculate the median fee rate of the block, or the average fee rate from the medium zone transactions
+    // See https://bitcoincore.org/en/doc/23.0.0/rpc/blockchain/getblock/
 
-        // TODO use get block with verbosity 3 would be a nice optimization (not yet supported by bitcoincore-rpc),
-        // it will remove the need to call again getrawtransaction
-        // with that approach we can cheaply calculate the median fee rate of the block, or the average fee rate from the medium zone transactions
-        // See https://bitcoincore.org/en/doc/23.0.0/rpc/blockchain/getblock/
+    let block_tx_count = next_block.txs.len();
+    tracing::trace!("Transactions count: {}", block_tx_count);
 
-        let block_tx_count = next_block.txs.len();
-        tracing::trace!("Transactions count: {}", block_tx_count);
+    // In a future version we can analyze if the block is full or empty or which %,
+    // a block lower than 75% will lead to lower fee rates for next block inclusion
+    if block_tx_count <= MIN_BLOCK_TX {
+        warn!(
+            "Can't estimate fee rate - block has {} or fewer transactions",
+            MIN_BLOCK_TX
+        );
+        return Ok(ERROR_FEE_RATE);
+    }
 
-        // In a future version we can analyze if the block is full or empty or which %,
-        // a block lower than 75% will lead to lower fee rates for next block inclusion
-        if block_tx_count <= MIN_BLOCK_TX {
-            warn!("Can't estimate fee rate - block has {} or fewer transactions", MIN_BLOCK_TX);
+    let middle_index = block_tx_count / 2;
+    let middle_tx = next_block.txs[middle_index].clone();
+
+    // Note: For coinbase transactions (first tx in block), there's no fee since there are no inputs
+    // Usually the block is ordered with coinbase as first transaction, but this is not enforced by consensus rules, to this case might rarely happen
+    if middle_tx.is_coinbase() {
+        warn!("Can't estimate fee rate - middle transaction is coinbase");
+        return Ok(ERROR_FEE_RATE);
+    }
+
+    let tx_id = middle_tx.compute_txid();
+
+    // This call needs bitcoin core 25.0.0 or higher
+    // see https://bitcoincore.org/en/doc/25.0.0/rpc/rawtransactions/getrawtransaction/
+    let raw_tx_verbose = bitcoin_client.get_raw_transaction_verbosity_two(&tx_id)?;
+
+    let fee_in_btc = match raw_tx_verbose.get("fee").and_then(|v| v.as_f64()) {
+        Some(fee_value) => fee_value,
+        None => {
+            error!(
+                "Can't estimate fee rate - no fee value available for transaction {}",
+                tx_id
+            );
             return Ok(ERROR_FEE_RATE);
         }
+    };
 
-        let middle_index = block_tx_count / 2;
-        let middle_tx = next_block.txs[middle_index].clone();
-
-        // Note: For coinbase transactions (first tx in block), there's no fee since there are no inputs
-        // Usually the block is ordered with coinbase as first transaction, but this is not enforced by consensus rules, to this case might rarely happen
-        if middle_tx.is_coinbase() {
-            warn!("Can't estimate fee rate - middle transaction is coinbase");
+    let vsize = match raw_tx_verbose.get("vsize").and_then(|v| v.as_u64()) {
+        Some(vsize_value) => vsize_value,
+        None => {
+            error!(
+                "Can't estimate fee rate - no vsize value available for transaction {}",
+                tx_id
+            );
             return Ok(ERROR_FEE_RATE);
         }
+    };
 
-        let tx_id = middle_tx.compute_txid();
+    let fee = match bitcoin::Amount::from_btc(fee_in_btc) {
+        Ok(amount) => amount.to_sat(),
+        Err(_) => {
+            error!(
+                "Can't estimate fee rate - invalid fee value {} for transaction {}",
+                fee_in_btc, tx_id
+            );
+            return Ok(ERROR_FEE_RATE);
+        }
+    };
 
-        // This call needs bitcoin core 25.0.0 or higher
-        // see https://bitcoincore.org/en/doc/25.0.0/rpc/rawtransactions/getrawtransaction/
-        let raw_tx_verbose = bitcoin_client.get_raw_transaction_verbosity_two(&tx_id)?;
+    let fee_rate = fee as f64 / vsize as f64;
+    let adjusted_fee_rate = if fee_rate < 1.0 {
+        DEFAULT_MIN_FEE_RATE
+    } else {
+        fee_rate as u64
+    };
 
-        let fee_in_btc = match raw_tx_verbose.get("fee").and_then(|v| v.as_f64()) {
-            Some(fee_value) => fee_value,
-            None => {
-                error!("Can't estimate fee rate - no fee value available for transaction {}", tx_id);
-                return Ok(ERROR_FEE_RATE);
-            }
-        };
+    tracing::debug!("TXID: {:#?}", tx_id);
+    tracing::debug!("Adjusted fee rate: {} sat/vB", adjusted_fee_rate);
+    tracing::trace!("middle index: {}", middle_index);
+    tracing::trace!("middle transaction: {:#?}", middle_tx);
+    tracing::trace!("raw_tx_verbose middle transaction: {:#?}", raw_tx_verbose);
+    tracing::trace!("Transaction fee: {} sats", fee);
+    tracing::trace!("Transaction vsize: {} vB", vsize);
+    tracing::trace!("Transaction fee rate: {} sat/vB", fee_rate);
+    tracing::trace!("Integer Transaction fee rate: {} sat/vB", fee_rate as u64);
 
-        let vsize = match raw_tx_verbose.get("vsize").and_then(|v| v.as_u64()) {
-            Some(vsize_value) => vsize_value,
-            None => {
-                error!("Can't estimate fee rate - no vsize value available for transaction {}", tx_id);
-                return Ok(ERROR_FEE_RATE);
-            }
-        };
-
-        let fee = match bitcoin::Amount::from_btc(fee_in_btc) {
-            Ok(amount) => amount.to_sat(),
-            Err(_) => {
-                error!("Can't estimate fee rate - invalid fee value {} for transaction {}", fee_in_btc, tx_id);
-                return Ok(ERROR_FEE_RATE);
-            }
-        };
-
-        let fee_rate = fee as f64 / vsize as f64;
-        let adjusted_fee_rate = if fee_rate < 1.0 { DEFAULT_MIN_FEE_RATE } else { fee_rate as u64 };
-
-        tracing::debug!("TXID: {:#?}", tx_id);
-        tracing::debug!("Adjusted fee rate: {} sat/vB", adjusted_fee_rate);
-        tracing::trace!("middle index: {}", middle_index);
-        tracing::trace!("middle transaction: {:#?}", middle_tx);
-        tracing::trace!("raw_tx_verbose middle transaction: {:#?}", raw_tx_verbose);
-        tracing::trace!("Transaction fee: {} sats", fee);
-        tracing::trace!("Transaction vsize: {} vB", vsize);
-        tracing::trace!("Transaction fee rate: {} sat/vB", fee_rate);
-        tracing::trace!("Integer Transaction fee rate: {} sat/vB", fee_rate as u64);
-
-        Ok(adjusted_fee_rate)
+    Ok(adjusted_fee_rate)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitcoin::{Transaction, TxIn, TxOut, OutPoint, ScriptBuf, Witness};
+    use bitcoin::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
     use bitvmx_bitcoin_rpc::bitcoin_client::MockBitcoinClientApi;
     use serde_json::json;
     use std::str::FromStr;
@@ -473,7 +490,10 @@ mod tests {
             });
         } else {
             tx.input.push(TxIn {
-                previous_output: OutPoint::from_str("0000000000000000000000000000000000000000000000000000000000000000:0").unwrap(),
+                previous_output: OutPoint::from_str(
+                    "0000000000000000000000000000000000000000000000000000000000000000:0",
+                )
+                .unwrap(),
                 script_sig: ScriptBuf::new(),
                 sequence: bitcoin::Sequence::MAX,
                 witness: Witness::new(),
@@ -496,9 +516,13 @@ mod tests {
         }
 
         BlockInfo {
-            hash: "0000000000000000000000000000000000000000000000000000000000000001".parse().unwrap(),
+            hash: "0000000000000000000000000000000000000000000000000000000000000001"
+                .parse()
+                .unwrap(),
             height: 100,
-            prev_hash: "0000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+            prev_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
             txs,
         }
     }
