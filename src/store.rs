@@ -65,6 +65,8 @@ pub trait StoreClient {
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
+    fn mark_following_blocks_as_orphan(&self, height: BlockHeight)
+        -> Result<(), IndexerStoreError>;
 }
 
 #[automock]
@@ -90,7 +92,7 @@ impl StoreClient for IndexerStore {
 
             saved_block.orphan = true;
 
-            // save block
+            // save previous block as an orphan.
             let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
             self.store.set(key, saved_block, None)?;
         }
@@ -233,6 +235,30 @@ impl StoreClient for IndexerStore {
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
         let key = self.get_key(StoreKey::BestBlock);
         self.store.set(key, height, None)?;
+        Ok(())
+    }
+
+    fn mark_following_blocks_as_orphan(
+        &self,
+        start_height_to_mark: BlockHeight,
+    ) -> Result<(), IndexerStoreError> {
+        let best_height = self.get_best_height()?;
+
+        if let Some(best_height) = best_height {
+            let mut current_height = start_height_to_mark;
+
+            while current_height <= best_height {
+                if let Some(mut block) = self.get_block_by_height(current_height)? {
+                    block.orphan = true;
+
+                    let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
+                    self.store.set(block_key, block, None)?;
+                }
+
+                current_height += 1;
+            }
+        }
+
         Ok(())
     }
 }

@@ -286,6 +286,9 @@ where
                 current_height
             );
 
+            self.store
+                .mark_following_blocks_as_orphan(new_blockchain_block.height)?;
+
             // Roll back to the previous block.
             let previous_blockchain_height = current_height.saturating_sub(1);
             self.store
