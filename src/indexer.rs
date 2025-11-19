@@ -123,15 +123,15 @@ where
                                         checkpoint
                                     );
 
+                                    info!("To use a new checkpoint, you need to wipe the entire database and restart the indexer with the new checkpoint.");
+                                    info!("The indexer will continue syncing from the last indexed height");
+
                                     return Err(
                                         IndexerError::AlreadyIndexedWithDifferentCheckpointHeight,
                                     );
                                 }
                             }
 
-                            warn!("The Indexer already has data; a checkpoint cannot be used as it would produce inconsistent data.");
-                            info!("To use a new checkpoint, you need to wipe the entire database and restart the indexer with the new checkpoint.");
-                            info!("The indexer will continue syncing from the last indexed height");
                             height_to_sync = indexer_height;
                         }
                         None => {
