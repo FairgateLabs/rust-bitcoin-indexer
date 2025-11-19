@@ -21,6 +21,7 @@ enum StoreKey {
     BlockTxsByHash(BlockHash),
     BestBlock,
     HeightToSync,
+    CheckpointHeight,
 }
 
 impl IndexerStore {
@@ -39,6 +40,7 @@ impl IndexerStore {
             StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
             StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
             StoreKey::HeightToSync => format!("{prefix}/meta/height_to_sync"),
+            StoreKey::CheckpointHeight => format!("{prefix}/meta/checkpoint_height"),
         }
     }
 }
@@ -65,6 +67,8 @@ pub trait StoreClient {
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
+    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
+    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
 }
 
 #[automock]
@@ -232,6 +236,18 @@ impl StoreClient for IndexerStore {
 
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
         let key = self.get_key(StoreKey::BestBlock);
+        self.store.set(key, height, None)?;
+        Ok(())
+    }
+
+    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
+        let key = self.get_key(StoreKey::CheckpointHeight);
+        let height = self.store.get(key)?;
+        Ok(height)
+    }
+
+    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::CheckpointHeight);
         self.store.set(key, height, None)?;
         Ok(())
     }

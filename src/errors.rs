@@ -38,4 +38,10 @@ pub enum IndexerError {
 
     #[error("Indexer is not synchronized")]
     IndexerNotSynced,
+
+    #[error("Already indexed with different checkpoint height")]
+    AlreadyIndexedWithDifferentCheckpointHeight,
+
+    #[error("Checkpoint height is behind indexed height")]
+    CheckpointHeightBehindIndexedHeight,
 }

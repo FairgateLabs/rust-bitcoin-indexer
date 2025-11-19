@@ -9,7 +9,7 @@ bitcoin:
     wallet: test_wallet
 
 settings:
-    checkpoint_height: 1
+    checkpoint_height: 2000
 
 # possible values: error | warn | info | debug | trace
 log_level: info

@@ -84,6 +84,26 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 
 ```
 
+## Checkpoint Height Configuration
+
+The `checkpoint_height` is an optional setting in the indexer configuration that specifies a specific block height from which the indexing process should start. This can be useful for syncing from a specific height. Here’s how it works:
+
+- **With Checkpoint Height**:
+  - If `checkpoint_height` is set, the indexer will begin syncing from the specified block height.
+  - If the blockchain height is lower than the `checkpoint_height`, an error will occur as the network has not reached this checkpoint.
+  - Once a checkpoint is set and indexed, you cannot change it unless the database is cleared.
+  
+- **Without Checkpoint Height**:
+  - If not set, indexing will start from the genesis block or from the last indexed height if there’s an existing index.
+
+To configure this, set the `checkpoint_height` in your settings:
+
+```yaml
+# Example configuration in config.yaml
+settings:
+  checkpoint_height: 2000
+```
+
 ## Development Setup
 
 1. Clone the repository

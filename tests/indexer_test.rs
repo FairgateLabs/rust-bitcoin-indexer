@@ -1,6 +1,7 @@
 use bitcoin::BlockHash;
 use bitcoin_indexer::{
     config::IndexerSettings,
+    errors::IndexerError,
     indexer::{Indexer, IndexerApi},
     store::StoreClient,
     types::FullBlock,
@@ -207,7 +208,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         assert_eq!(indexer.get_height_to_sync()?, 10);
     }
 
-    // 5. Indexed block exists, checkpoint < indexed height (should warn and use checkpoint)
+    // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
     {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
@@ -231,14 +232,16 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         store.save_last_synced_height(11)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
-        assert_eq!(indexer.get_best_height()?, Some(10));
-        assert_eq!(indexer.get_height_to_sync()?, 10);
+        assert_eq!(indexer.get_best_height()?, Some(11));
+        assert_eq!(indexer.get_height_to_sync()?, 11);
     }
 
-    // 6. Indexed block exists, checkpoint > indexed height (should warn and use indexed height)
+    // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
     {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
+
+        store.save_checkpoint_height(10)?;
 
         store.save_new_best_block(&block_10_clone, 0)?;
         bitcoin_client
@@ -259,9 +262,12 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(12))
             .returning(move |_| Ok(Some(block_12_clone.clone())));
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
-        assert_eq!(indexer.get_best_height()?, Some(12));
-        assert_eq!(indexer.get_height_to_sync()?, 12);
+        let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))));
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(IndexerError::AlreadyIndexedWithDifferentCheckpointHeight)
+        ));
     }
 
     // 7. Indexed block exists, checkpoint == indexed height (should use indexed height)
