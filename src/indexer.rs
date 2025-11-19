@@ -73,7 +73,7 @@ where
         // The current block height of the Bitcoin network.
         let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
-        let mut height_to_sync = 0;
+        let height_to_sync;
 
         match indexed_height {
             Some(indexer_height) => {
@@ -81,8 +81,7 @@ where
                 // Here we have to validate that the indexed_height is correct against the blockchain_height
                 if blockchain_height < indexer_height {
                     error!(
-                        "Blockchain height is behind the indexed height at height {}. Blockchain height: {}, Indexed height: {}",
-                        indexer_height,
+                        "Blockchain height is behind the indexed height. BlockchainHeight({}), IndexedHeight({})",
                         blockchain_height,
                         indexer_height
                     );
@@ -104,7 +103,7 @@ where
 
                     if blockchain_block_hash != indexed_block_hash.unwrap() {
                         error!(
-                            "Indexed block hash does not match blockchain hash at height {}. Indexed block hash: {:?}, Blockchain block hash: {:?}",
+                            "Indexed block hash does not match blockchain hash at IndexedHeight({}). IndexedBlockHash({:?}), BlockchainBlockHash({:?})",
                             indexer_height,
                             indexed_block_hash.unwrap(),
                             blockchain_block_hash
@@ -114,35 +113,26 @@ where
 
                     match settings.checkpoint_height {
                         Some(checkpoint) => {
-                            if checkpoint > blockchain_height {
-                                error!(
-                                    "CHECKPOINT_HEIGHT({}) is ahead of blockchain height ({})",
-                                    checkpoint, blockchain_height
-                                );
-                                return Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight);
+                            let existing_checkpoint = store.get_checkpoint_height()?;
+
+                            if existing_checkpoint.is_some() {
+                                if existing_checkpoint.unwrap() != checkpoint {
+                                    error!(
+                                    "The checkpoint height used is different from the previously indexed one. Previously CheckpointHeight({}), New CheckpointHeight({})",
+                                        existing_checkpoint.unwrap(),
+                                        checkpoint
+                                    );
+
+                                    info!("To use a new checkpoint, you need to wipe the entire database and restart the indexer with the new checkpoint.");
+                                    info!("The indexer will continue syncing from the last indexed height");
+
+                                    return Err(
+                                        IndexerError::AlreadyIndexedWithDifferentCheckpointHeight,
+                                    );
+                                }
                             }
 
-                            if checkpoint < indexer_height {
-                                warn!(
-                                    "CHECKPOINT_HEIGHT({}) is behind last IndexerHeight({})",
-                                    checkpoint, height_to_sync
-                                );
-                                info!("Using CHECKPOINT_HEIGHT({}) to start syncing", checkpoint);
-                            }
-
-                            if checkpoint > indexer_height {
-                                warn!(
-                                    "CHECKPOINT_HEIGHT({}) is ahead of last IndexerHeight({})",
-                                    checkpoint, indexer_height
-                                );
-                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
-                            }
-
-                            if checkpoint == indexer_height {
-                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
-                            }
-
-                            height_to_sync = checkpoint;
+                            height_to_sync = indexer_height;
                         }
                         None => {
                             height_to_sync = indexer_height;
@@ -153,15 +143,15 @@ where
             None => match settings.checkpoint_height {
                 Some(checkpoint) => {
                     if blockchain_height < checkpoint {
-                        let error =
-                                "The current block height of the Bitcoin network is behind the starting block to sync";
-                        error!("{}", error);
-                        return Err(IndexerError::InconsistentBlockchain);
+                        error!("The Bitcoin network's current block height is behind the checkpoint height");
+                        return Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight);
                     }
 
-                    info!("Starting to sync from CHECKPOINT_HEIGHT({})", checkpoint);
+                    store.save_checkpoint_height(checkpoint)?;
 
                     height_to_sync = checkpoint;
+
+                    info!("Starting to sync from CheckpointHeight({})", checkpoint);
                 }
                 None => {
                     info!("Starting to sync from genesis block");
