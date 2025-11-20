@@ -39,10 +39,6 @@ pub trait IndexerApi {
     /// Returns `Ok(BlockHeight)` with the current blockchain height, or an `IndexerError` if an error occurs.
     fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError>;
 
-    /// Determines the next block height that needs to be synchronized.
-    /// Returns `Ok(BlockHeight)` with the height to sync, or an `IndexerError` if an error occurs.
-    fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerError>;
-
     /// Retrieves a block by its height.
     /// Returns `Ok(Some(FullBlock))` if the block is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
     fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError>;
@@ -68,12 +64,12 @@ where
         let settings = settings.unwrap_or_default();
 
         // The highest block height that has already been synchronized and stored in the storage.
-        let indexed_height = store.get_best_block()?.map(|block| block.height);
+        let indexed_height = store.get_best_height()?;
 
         // The current block height of the Bitcoin network.
         let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
 
-        let mut height_to_sync = 0;
+        let height_to_sync;
 
         match indexed_height {
             Some(indexer_height) => {
@@ -81,8 +77,7 @@ where
                 // Here we have to validate that the indexed_height is correct against the blockchain_height
                 if blockchain_height < indexer_height {
                     error!(
-                        "Blockchain height is behind the indexed height at height {}. Blockchain height: {}, Indexed height: {}",
-                        indexer_height,
+                        "Blockchain height is behind the indexed height. BlockchainHeight({}), IndexedHeight({})",
                         blockchain_height,
                         indexer_height
                     );
@@ -104,7 +99,7 @@ where
 
                     if blockchain_block_hash != indexed_block_hash.unwrap() {
                         error!(
-                            "Indexed block hash does not match blockchain hash at height {}. Indexed block hash: {:?}, Blockchain block hash: {:?}",
+                            "Indexed block hash does not match blockchain hash at IndexedHeight({}). IndexedBlockHash({:?}), BlockchainBlockHash({:?})",
                             indexer_height,
                             indexed_block_hash.unwrap(),
                             blockchain_block_hash
@@ -114,35 +109,26 @@ where
 
                     match settings.checkpoint_height {
                         Some(checkpoint) => {
-                            if checkpoint > blockchain_height {
-                                error!(
-                                    "CHECKPOINT_HEIGHT({}) is ahead of blockchain height ({})",
-                                    checkpoint, blockchain_height
-                                );
-                                return Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight);
+                            let existing_checkpoint = store.get_checkpoint_height()?;
+
+                            if existing_checkpoint.is_some() {
+                                if existing_checkpoint.unwrap() != checkpoint {
+                                    error!(
+                                    "The checkpoint height used is different from the previously indexed one. Previously CheckpointHeight({}), New CheckpointHeight({})",
+                                        existing_checkpoint.unwrap(),
+                                        checkpoint
+                                    );
+
+                                    info!("To use a new checkpoint, you need to wipe the entire database and restart the indexer with the new checkpoint.");
+                                    info!("The indexer will continue syncing from the last indexed height");
+
+                                    return Err(
+                                        IndexerError::AlreadyIndexedWithDifferentCheckpointHeight,
+                                    );
+                                }
                             }
 
-                            if checkpoint < indexer_height {
-                                warn!(
-                                    "CHECKPOINT_HEIGHT({}) is behind last IndexerHeight({})",
-                                    checkpoint, height_to_sync
-                                );
-                                info!("Using CHECKPOINT_HEIGHT({}) to start syncing", checkpoint);
-                            }
-
-                            if checkpoint > indexer_height {
-                                warn!(
-                                    "CHECKPOINT_HEIGHT({}) is ahead of last IndexerHeight({})",
-                                    checkpoint, indexer_height
-                                );
-                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
-                            }
-
-                            if checkpoint == indexer_height {
-                                info!("Using IndexerHeight({}) to start syncing", indexer_height);
-                            }
-
-                            height_to_sync = checkpoint;
+                            height_to_sync = indexer_height;
                         }
                         None => {
                             height_to_sync = indexer_height;
@@ -153,15 +139,15 @@ where
             None => match settings.checkpoint_height {
                 Some(checkpoint) => {
                     if blockchain_height < checkpoint {
-                        let error =
-                                "The current block height of the Bitcoin network is behind the starting block to sync";
-                        error!("{}", error);
-                        return Err(IndexerError::InconsistentBlockchain);
+                        error!("The Bitcoin network's current block height is behind the checkpoint height");
+                        return Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight);
                     }
 
-                    info!("Starting to sync from CHECKPOINT_HEIGHT({})", checkpoint);
+                    store.save_checkpoint_height(checkpoint)?;
 
                     height_to_sync = checkpoint;
+
+                    info!("Starting to sync from CheckpointHeight({})", checkpoint);
                 }
                 None => {
                     info!("Starting to sync from genesis block");
@@ -169,8 +155,6 @@ where
                 }
             },
         }
-
-        store.save_last_synced_height(height_to_sync)?;
 
         // Check if the block exists in the storage. If not, save it.
         let block_hash = store.get_block_hash_by_height(height_to_sync)?;
@@ -208,18 +192,9 @@ where
         Ok(current_height.unwrap() >= blockchain_height)
     }
 
-    fn get_height_to_sync(&self) -> Result<BlockHeight, IndexerError> {
-        let height_to_sync = self.store.get_last_synced_height()?;
-        Ok(height_to_sync)
-    }
-
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
-        let best_block = self.store.get_best_block()?;
-        if let Some(best_block) = best_block {
-            Ok(Some(best_block.height))
-        } else {
-            Ok(None)
-        }
+        let best_height = self.store.get_best_height()?;
+        Ok(best_height)
     }
 
     fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError> {
@@ -235,27 +210,30 @@ where
     }
 
     fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
-        let best_indexer_height: u32 = self.store.get_last_synced_height()?;
+        let best_block = self.store.get_best_block()?;
         let best_blockchain_height = self.bitcoin_client.get_best_block()?;
-        if best_indexer_height != best_blockchain_height {
+
+        if best_block.is_none() {
             return Err(IndexerError::IndexerNotSynced);
         }
 
-        let best_block = self.store.get_best_block()?;
-        if let Some(best_block) = best_block {
-            if best_block.estimated_fee_rate > 0 {
-                Ok(best_block.estimated_fee_rate)
-            } else {
-                Err(IndexerError::FeeRateNotEstimated)
-            }
+        let best_block = best_block.unwrap();
+
+        if best_block.height != best_blockchain_height {
+            return Err(IndexerError::IndexerNotSynced);
+        }
+
+        if best_block.estimated_fee_rate > 0 {
+            Ok(best_block.estimated_fee_rate)
         } else {
-            Err(IndexerError::BlockNotFound)
+            Err(IndexerError::FeeRateNotEstimated)
         }
     }
 
     fn tick(&self) -> Result<(), IndexerError> {
         // Retrieve the last block height that has been successfully synced by the indexer.
-        let best_indexer_height: u32 = self.store.get_last_synced_height()?;
+        // This should have data.
+        let best_indexer_height = self.store.get_best_height()?.unwrap_or(0);
         // Retrieve the current best block height from the Bitcoin blockchain.
         let best_blockchain_height = self.bitcoin_client.get_best_block()?;
 
@@ -291,8 +269,7 @@ where
 
             // Roll back to the previous block.
             let previous_blockchain_height = current_height.saturating_sub(1);
-            self.store
-                .save_last_synced_height(previous_blockchain_height)?;
+            self.store.save_best_height(previous_blockchain_height)?;
 
             info!(
                 "Rolling back to previous block. New block to sync height: {}",
@@ -315,7 +292,6 @@ where
             // This situation can occur if blocks have been invalidated or a reorg has caused the blockchain to roll back.
             // To resolve this, update the indexer's synced and best heights to match the blockchain's current best height.
             warn!("Indexer is ahead of the blockchain. Updating synced and best heights to match the blockchain's current best height.");
-            self.store.save_last_synced_height(best_blockchain_height)?;
             self.store.save_best_height(best_blockchain_height)?;
             return Ok(());
         }
@@ -340,7 +316,6 @@ where
         self.store
             .save_new_best_block(&next_block, estimated_fee_rate)?;
         // Update the last synced height to reflect the new block.
-        self.store.save_last_synced_height(next_block_height)?;
 
         Ok(())
     }

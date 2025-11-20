@@ -1,6 +1,7 @@
 use bitcoin::BlockHash;
 use bitcoin_indexer::{
     config::IndexerSettings,
+    errors::IndexerError,
     indexer::{Indexer, IndexerApi},
     store::StoreClient,
     types::FullBlock,
@@ -200,14 +201,13 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_clone.clone())));
 
-        store.save_last_synced_height(10)?;
+        store.save_best_height(10)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         assert_eq!(indexer.get_best_height()?, Some(10));
-        assert_eq!(indexer.get_height_to_sync()?, 10);
     }
 
-    // 5. Indexed block exists, checkpoint < indexed height (should warn and use checkpoint)
+    // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
     {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
@@ -228,17 +228,18 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_clone.clone())));
 
-        store.save_last_synced_height(11)?;
+        store.save_best_height(11)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
-        assert_eq!(indexer.get_best_height()?, Some(10));
-        assert_eq!(indexer.get_height_to_sync()?, 10);
+        assert_eq!(indexer.get_best_height()?, Some(11));
     }
 
-    // 6. Indexed block exists, checkpoint > indexed height (should warn and use indexed height)
+    // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
     {
         let mut bitcoin_client = MockBitcoinClient::new();
         let store = get_indexer_store();
+
+        store.save_checkpoint_height(10)?;
 
         store.save_new_best_block(&block_10_clone, 0)?;
         bitcoin_client
@@ -251,7 +252,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_copy.clone())));
 
-        store.save_last_synced_height(10)?;
+        store.save_best_height(10)?;
 
         let block_12_clone = block_12.clone();
         bitcoin_client
@@ -259,9 +260,12 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(12))
             .returning(move |_| Ok(Some(block_12_clone.clone())));
 
-        let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
-        assert_eq!(indexer.get_best_height()?, Some(12));
-        assert_eq!(indexer.get_height_to_sync()?, 12);
+        let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))));
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(IndexerError::AlreadyIndexedWithDifferentCheckpointHeight)
+        ));
     }
 
     // 7. Indexed block exists, checkpoint == indexed height (should use indexed height)
@@ -277,11 +281,10 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .expect_get_block_by_height()
             .with(eq(12))
             .returning(move |_| Ok(Some(block_12.clone())));
-        store.save_last_synced_height(12)?;
+        store.save_best_height(12)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
         assert_eq!(indexer.get_best_height()?, Some(12));
-        assert_eq!(indexer.get_height_to_sync()?, 12);
     }
 
     clear_output();
@@ -382,7 +385,7 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     indexer.tick()?;
 
     // Should have rolled back to height 9
-    assert_eq!(indexer.get_height_to_sync()?, 9);
+    assert_eq!(indexer.get_best_height()?, Some(9));
 
     let orphaned_block = store.get_block_by_height(10)?;
 
@@ -402,7 +405,7 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     // Tick 3: Sync new block 10 and block 11
     indexer.tick()?;
 
-    assert_eq!(indexer.get_height_to_sync()?, 10);
+    assert_eq!(indexer.get_best_height()?, Some(10));
 
     let block_at_10: FullBlock = store
         .get_block_by_height(10)?
@@ -415,7 +418,7 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
 
     indexer.tick()?;
 
-    assert_eq!(indexer.get_height_to_sync()?, 11);
+    assert_eq!(indexer.get_best_height()?, Some(11));
 
     let block_at_11: FullBlock = store
         .get_block_by_height(11)?

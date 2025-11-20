@@ -20,7 +20,7 @@ enum StoreKey {
     TransactionById(Txid),
     BlockTxsByHash(BlockHash),
     BestBlock,
-    HeightToSync,
+    CheckpointHeight,
 }
 
 impl IndexerStore {
@@ -38,7 +38,7 @@ impl IndexerStore {
             StoreKey::TransactionById(tx_id) => format!("{prefix}/block/tx/{tx_id}"),
             StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
             StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
-            StoreKey::HeightToSync => format!("{prefix}/meta/height_to_sync"),
+            StoreKey::CheckpointHeight => format!("{prefix}/meta/checkpoint_height"),
         }
     }
 }
@@ -60,13 +60,13 @@ pub trait StoreClient {
         estimated_fee_rate: u64,
     ) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
-    fn get_last_synced_height(&self) -> Result<BlockHeight, IndexerStoreError>;
-    fn save_last_synced_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
     fn mark_following_blocks_as_orphan(&self, height: BlockHeight)
         -> Result<(), IndexerStoreError>;
+    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
+    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
 }
 
 #[automock]
@@ -137,16 +137,16 @@ impl StoreClient for IndexerStore {
     fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError> {
         let best_block_height = self.get_best_height()?;
 
-        if let Some(height) = best_block_height {
-            match self.get_block_hash_by_height(height)? {
-                Some(block_hash) => match self.get_block_by_hash(&block_hash)? {
-                    Some(block) => Ok(Some(block)),
-                    None => Err(IndexerStoreError::BlockNotFound),
-                },
+        if best_block_height.is_none() {
+            return Ok(None);
+        }
+
+        match self.get_block_hash_by_height(best_block_height.unwrap())? {
+            Some(block_hash) => match self.get_block_by_hash(&block_hash)? {
+                Some(block) => Ok(Some(block)),
                 None => Err(IndexerStoreError::BlockNotFound),
-            }
-        } else {
-            Ok(None)
+            },
+            None => Err(IndexerStoreError::BlockNotFound),
         }
     }
 
@@ -177,7 +177,7 @@ impl StoreClient for IndexerStore {
                 None => return Err(IndexerStoreError::BlockNotFound),
             };
 
-            let best_block_height = self.get_best_height()?.unwrap_or_default();
+            let best_block_height = self.get_best_height()?.unwrap_or(0);
 
             let mut confirmations = best_block_height
                 .saturating_sub(block_info.height)
@@ -200,18 +200,6 @@ impl StoreClient for IndexerStore {
         }
     }
 
-    fn get_last_synced_height(&self) -> Result<BlockHeight, IndexerStoreError> {
-        let key = self.get_key(StoreKey::HeightToSync);
-        let height = self.store.get(key)?.unwrap_or(0);
-        Ok(height)
-    }
-
-    fn save_last_synced_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::HeightToSync);
-        self.store.set(key, height, None)?;
-        Ok(())
-    }
-
     fn get_block_by_height(
         &self,
         height: BlockHeight,
@@ -228,7 +216,7 @@ impl StoreClient for IndexerStore {
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BestBlock);
-        let height = self.store.get(key)?;
+        let height: Option<BlockHeight> = self.store.get(key)?;
         Ok(height)
     }
 
@@ -242,23 +230,32 @@ impl StoreClient for IndexerStore {
         &self,
         start_height_to_mark: BlockHeight,
     ) -> Result<(), IndexerStoreError> {
-        let best_height = self.get_best_height()?;
+        let best_height = self.get_best_height()?.unwrap_or(0);
 
-        if let Some(best_height) = best_height {
-            let mut current_height = start_height_to_mark;
+        let mut current_height = start_height_to_mark;
 
-            while current_height <= best_height {
-                if let Some(mut block) = self.get_block_by_height(current_height)? {
-                    block.orphan = true;
+        while current_height <= best_height {
+            if let Some(mut block) = self.get_block_by_height(current_height)? {
+                block.orphan = true;
 
-                    let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
-                    self.store.set(block_key, block, None)?;
-                }
-
-                current_height += 1;
+                let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
+                self.store.set(block_key, block, None)?;
             }
-        }
 
+            current_height += 1;
+        }
+        Ok(())
+    }
+
+    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
+        let key = self.get_key(StoreKey::CheckpointHeight);
+        let height = self.store.get(key)?;
+        Ok(height)
+    }
+
+    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::CheckpointHeight);
+        self.store.set(key, height, None)?;
         Ok(())
     }
 }
