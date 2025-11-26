@@ -201,11 +201,10 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_clone.clone())));
 
-        store.save_last_synced_height(10)?;
+        store.save_best_height(10)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         assert_eq!(indexer.get_best_height()?, Some(10));
-        assert_eq!(indexer.get_height_to_sync()?, 10);
     }
 
     // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
@@ -229,11 +228,10 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_clone.clone())));
 
-        store.save_last_synced_height(11)?;
+        store.save_best_height(11)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
         assert_eq!(indexer.get_best_height()?, Some(11));
-        assert_eq!(indexer.get_height_to_sync()?, 11);
     }
 
     // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
@@ -254,7 +252,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .with(eq(10))
             .returning(move |_| Ok(Some(block_10_copy.clone())));
 
-        store.save_last_synced_height(10)?;
+        store.save_best_height(10)?;
 
         let block_12_clone = block_12.clone();
         bitcoin_client
@@ -283,12 +281,150 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             .expect_get_block_by_height()
             .with(eq(12))
             .returning(move |_| Ok(Some(block_12.clone())));
-        store.save_last_synced_height(12)?;
+        store.save_best_height(12)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
         assert_eq!(indexer.get_best_height()?, Some(12));
-        assert_eq!(indexer.get_height_to_sync()?, 12);
     }
+
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
+    use bitcoin::{absolute::LockTime, transaction::Version};
+
+    // Initialize tracing to see warn! and info! output
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
+    // Setup: Create blocks at heights 9 and 10
+    let hash_9 =
+        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000009")?;
+    let hash_10_original =
+        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000000a")?;
+    let hash_10_reorg =
+        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000010a")?;
+    let hash_11 =
+        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000010b")?;
+    let tx = bitcoin::Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: vec![],
+    };
+    let block_9 = BlockInfo {
+        height: 9,
+        hash: hash_9,
+        prev_hash: BlockHash::all_zeros(),
+        txs: vec![tx.clone()],
+    };
+    let block_10_original = BlockInfo {
+        height: 10,
+        hash: hash_10_original,
+        prev_hash: hash_9,
+        txs: vec![tx.clone()],
+    };
+    let block_10_reorg = BlockInfo {
+        height: 10,
+        hash: hash_10_reorg,
+        prev_hash: hash_9,
+        txs: vec![tx.clone()],
+    };
+    let block_11 = BlockInfo {
+        height: 11,
+        hash: hash_11,
+        prev_hash: hash_10_original,
+        txs: vec![],
+    };
+    let mut bitcoin_client = MockBitcoinClient::new();
+    let store = get_indexer_store();
+    bitcoin_client.expect_get_best_block().returning(|| Ok(11));
+
+    let block_9_clone = block_9.clone();
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(9))
+        .returning(move |_| Ok(Some(block_9_clone.clone())));
+    // First tick: return original block 10
+    let block_10_clone1 = block_10_original.clone();
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(10))
+        .times(1)
+        .returning(move |_| Ok(Some(block_10_clone1.clone())));
+    // Second tick: return different block 10 (reorg)
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(10))
+        .returning(move |_| Ok(Some(block_10_reorg.clone())));
+    bitcoin_client
+        .expect_get_block_by_height()
+        .with(eq(11))
+        .returning(move |_| Ok(Some(block_11.clone())));
+
+    let indexer = Indexer::new(
+        bitcoin_client,
+        store.clone(),
+        Some(IndexerSettings::new(Some(9))),
+    )?;
+    // Tick 1: Sync block 10 (original)
+    indexer.tick()?;
+    assert_eq!(indexer.get_best_height()?, Some(10));
+    let block_at_10: FullBlock = store
+        .get_block_by_height(10)?
+        .expect("Block 10 should exist");
+    assert_eq!(block_at_10.hash, hash_10_original);
+    assert_eq!(
+        block_at_10.orphan, false,
+        "Block 10 should not be orphan initially"
+    );
+
+    // Tick 2: Detect reorg (different block at height 10)
+    indexer.tick()?;
+
+    // Should have rolled back to height 9
+    assert_eq!(indexer.get_best_height()?, Some(9));
+
+    let orphaned_block = store.get_block_by_height(10)?;
+
+    if let Some(block) = orphaned_block {
+        assert_eq!(block.hash, hash_10_original);
+        assert_eq!(block.orphan, true, "Orphaned block still has orphan=true");
+    }
+
+    let orphaned_by_hash = store.get_block_by_hash(&hash_10_original)?;
+    if let Some(block) = orphaned_by_hash {
+        assert_eq!(
+            block.orphan, true,
+            "get_block_by_hash also returns orphan=true"
+        );
+    }
+
+    // Tick 3: Sync new block 10 and block 11
+    indexer.tick()?;
+
+    assert_eq!(indexer.get_best_height()?, Some(10));
+
+    let block_at_10: FullBlock = store
+        .get_block_by_height(10)?
+        .expect("Block 10 should exist");
+    assert_eq!(block_at_10.hash, hash_10_reorg);
+    assert_eq!(
+        block_at_10.orphan, false,
+        "New Block 10 should not be orphan"
+    );
+
+    indexer.tick()?;
+
+    assert_eq!(indexer.get_best_height()?, Some(11));
+
+    let block_at_11: FullBlock = store
+        .get_block_by_height(11)?
+        .expect("Block 11 should exist");
+    assert_eq!(block_at_11.hash, hash_11);
+    assert_eq!(block_at_11.orphan, false, "Block 11 should not be orphan");
 
     clear_output();
     Ok(())

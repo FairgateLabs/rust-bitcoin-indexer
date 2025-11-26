@@ -50,7 +50,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
-    assert_eq!(indexer.get_height_to_sync()?, 110);
 
     info!("Making 3 more ticks to ensure that the indexer does not process the next block");
     for _ in 0..3 {
@@ -60,7 +59,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
-    assert_eq!(indexer.get_height_to_sync()?, 110);
 
     info!("Mining 10 more blocks");
     bitcoin_client.mine_blocks_to_address(10, &wallet)?;
@@ -73,7 +71,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 120 and the blockchain is at height 120");
     assert_eq!(indexer.get_best_height()?, Some(120));
     assert_eq!(bitcoin_client.get_best_block()?, 120);
-    assert_eq!(indexer.get_height_to_sync()?, 120);
 
     info!("Invalidating the last 10 blocks");
     bitcoin_client.invalidate_block(&bitcoin_client.get_block_by_height(&111)?.unwrap().hash)?;
@@ -85,7 +82,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking after ticks that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
-    assert_eq!(indexer.get_height_to_sync()?, 110);
 
     info!("Making 2 more ticks");
     indexer.tick()?;
@@ -93,7 +89,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 110 and the blockchain is at height 110");
     assert_eq!(indexer.get_best_height()?, Some(110));
     assert_eq!(bitcoin_client.get_best_block()?, 110);
-    assert_eq!(indexer.get_height_to_sync()?, 110);
 
     info!("Mining 10 more blocks");
     let user_pubkey = get_random_pubkey();
@@ -106,7 +101,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     }
     assert_eq!(indexer.get_best_height()?, Some(120));
     assert_eq!(bitcoin_client.get_best_block()?, 120);
-    assert_eq!(indexer.get_height_to_sync()?, 120);
 
     info!("Invalidating 30 blocks and mining 50 blocks more, then the indexer will reorg and see 20 blocks ahead.");
     bitcoin_client.invalidate_block(&bitcoin_client.get_block_by_height(&91)?.unwrap().hash)?;
@@ -122,7 +116,6 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 140 and the blockchain is at height 140");
     assert_eq!(indexer.get_best_height()?, Some(140));
     assert_eq!(bitcoin_client.get_best_block()?, 140);
-    assert_eq!(indexer.get_height_to_sync()?, 140);
 
     clear_output();
 
