@@ -43,6 +43,9 @@ pub trait IndexerApi {
     /// Returns `Ok(Some(FullBlock))` if the block is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
     fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError>;
 
+    // Retrieves a block by its hash.
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError>;
+
     /// Retrieves transaction information for a given transaction ID.
     /// Returns `Ok(Some(TransactionInfo))` if the transaction is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
     fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
@@ -322,6 +325,11 @@ where
 
     fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_block_by_height(height)?;
+        Ok(block)
+    }
+
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError> {
+        let block = self.store.get_block_by_hash(hash)?;
         Ok(block)
     }
 }
