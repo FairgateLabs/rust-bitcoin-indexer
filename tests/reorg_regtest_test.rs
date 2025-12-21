@@ -92,7 +92,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
 
     info!("Mining 10 more blocks");
     let user_pubkey = get_random_pubkey();
-    let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest);
+    let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
     bitcoin_client.mine_blocks_to_address(10, &wallet)?;
 
     info!("Making 10 more ticks");
@@ -105,7 +105,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Invalidating 30 blocks and mining 50 blocks more, then the indexer will reorg and see 20 blocks ahead.");
     bitcoin_client.invalidate_block(&bitcoin_client.get_block_by_height(&91)?.unwrap().hash)?;
     let user_pubkey = get_random_pubkey();
-    let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest);
+    let wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
     bitcoin_client.mine_blocks_to_address(50, &wallet)?;
 
     info!("Making 80 ticks to ensure that the indexer rolls back and processes new blocks");

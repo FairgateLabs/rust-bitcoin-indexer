@@ -2,7 +2,6 @@ use bitcoin::BlockHash;
 use bitcoin_indexer::{
     config::IndexerSettings,
     indexer::{Indexer, IndexerApi},
-    store::StoreClient,
 };
 use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
 mod utils;
