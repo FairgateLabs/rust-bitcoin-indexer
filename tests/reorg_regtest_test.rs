@@ -4,7 +4,7 @@ use bitcoin_indexer::{
     config::IndexerConfig,
     indexer::{Indexer, IndexerApi},
 };
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_settings::settings;
 use tracing::info;
@@ -24,11 +24,17 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     };
 
     tracing_subscriber::fmt().with_max_level(log_level).init();
+    
+    let bitcoind_config = BitcoindConfig::new(
+        "bitcoin-regtest".to_string(),
+        "bitcoin/bitcoin:29.1".to_string(),
+        None,
+        config.bitcoin.clone()
+    );
 
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
-        config.bitcoin.clone(),
+        bitcoind_config,
+        None
     );
 
     bitcoind.start()?;
