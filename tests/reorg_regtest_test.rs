@@ -24,13 +24,8 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     };
 
     tracing_subscriber::fmt().with_max_level(log_level).init();
-    
-    let bitcoind_config = BitcoindConfig::new(
-        "bitcoin-regtest".to_string(),
-        "bitcoin/bitcoin:29.1".to_string(),
-        None,
-        config.bitcoin.clone()
-    );
+
+    let bitcoind_config = BitcoindConfig::default();
 
     let bitcoind = Bitcoind::new(
         bitcoind_config,
