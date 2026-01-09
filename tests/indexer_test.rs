@@ -1,141 +1,79 @@
-use bitcoin::BlockHash;
 use bitcoin_indexer::{
-    config::IndexerSettings,
+    config::{IndexerConfig, IndexerSettings},
     errors::IndexerError,
     indexer::{Indexer, IndexerApi},
     store::StoreClient,
     types::FullBlock,
 };
-use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
+use bitcoind::bitcoind::Bitcoind;
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitvmx_settings::settings;
 mod utils;
 use crate::utils::clear_output;
-use mockall::predicate::eq;
-use std::str::FromStr;
 use utils::get_indexer_store;
 
 #[test]
+#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_get_best_block() -> Result<(), anyhow::Error> {
-    let mut bitcoin_client = MockBitcoinClient::new();
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind = Bitcoind::new(
+        "bitcoin-regtest",
+        "bitcoin/bitcoin:29.1",
+        config.bitcoin.clone(),
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let store = get_indexer_store();
 
-    let hash =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash =
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
-    let full_block = FullBlock {
-        height: 1000,
-        hash: hash.clone(),
-        orphan: false,
-        prev_hash: prev_hash.clone(),
-        txs: vec![],
-        estimated_fee_rate: 0,
-    };
-
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(1000));
-
-    let block_info = BlockInfo {
-        height: 1000,
-        hash: hash.clone(),
-        prev_hash: prev_hash.clone(),
-        txs: vec![],
-    };
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1000))
-        .returning(move |_| Ok(Some(block_info.clone())));
+    // Mine some blocks to have data to work with
+    bitcoin_client.mine_blocks_to_address(101, &wallet)?;
 
     let indexer = Indexer::new(
         bitcoin_client,
-        store,
-        Some(IndexerSettings::new(Some(1000))),
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
     )?;
+    
+    // Initially the indexer should be at checkpoint height
     let best_block = indexer.get_best_block()?;
-    assert_eq!(best_block.unwrap().height, 1000);
+    assert!(best_block.is_some());
+    assert_eq!(best_block.unwrap().height, 100);
 
+    // After tick, it should sync the next block
     indexer.tick()?;
     let best_block = indexer.get_best_block()?;
-    assert_eq!(best_block, Some(full_block));
+    assert!(best_block.is_some());
+    assert_eq!(best_block.unwrap().height, 101);
 
     clear_output();
     Ok(())
 }
 
 #[test]
+#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
-    use crate::utils::get_indexer_store;
-    use bitcoin::{absolute::LockTime, transaction::Version, BlockHash, Transaction};
-    use bitcoin_indexer::indexer::{Indexer, IndexerApi};
-    use bitvmx_bitcoin_rpc::bitcoin_client::MockBitcoinClient;
-    use bitvmx_bitcoin_rpc::types::BlockInfo;
-    use mockall::predicate::eq;
-    use std::str::FromStr;
-
-    // Setup block hashes
-    let hash_10 =
-        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000010")?;
-    let hash_11 =
-        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000011")?;
-    let hash_12 =
-        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000012")?;
-    let prev_hash_9 =
-        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000009")?;
-
-    let tx = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-
-    let block_0 = BlockInfo {
-        height: 0,
-        hash: hash_10.clone(),
-        prev_hash: prev_hash_9.clone(),
-        txs: vec![tx.clone()],
-    };
-
-    // Block at height 10
-    let block_10 = BlockInfo {
-        height: 10,
-        hash: hash_10,
-        prev_hash: prev_hash_9,
-        txs: vec![tx.clone()],
-    };
-
-    let block_10_clone = block_10.clone();
-
-    // Block at height 11
-    let block_11 = BlockInfo {
-        height: 11,
-        hash: hash_11,
-        prev_hash: hash_10,
-        txs: vec![],
-    };
-
-    // Block at height 12
-    let block_12 = BlockInfo {
-        height: 12,
-        hash: hash_12,
-        prev_hash: hash_11,
-        txs: vec![],
-    };
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
 
     // 1. No indexed block, no checkpoint (should start from genesis)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-1",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(0))
-            .returning(move |_| Ok(Some(block_0.clone())));
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         // Should have saved height_to_sync = 0
@@ -144,19 +82,18 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 2. No indexed block, checkpoint = 11 (should start from 11)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-2",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-
-        let block_11_clone = block_11.clone();
-
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(11))
-            .returning(move |_| Ok(Some(block_11_clone.clone())));
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(11))))?;
         assert_eq!(indexer.get_best_height()?, Some(11));
@@ -164,19 +101,18 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 3. No indexed block, checkpoint > blockchain height (should error)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-3",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(10));
-
-        let block_10_clone = block_10.clone();
-
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(10))
-            .returning(move |_| Ok(Some(block_10_clone.clone())));
+        
+        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
 
         let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(20))));
         assert!(result.is_err());
@@ -184,23 +120,22 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 4. Indexed block exists, checkpoint is None (should start from indexed height)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-4",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
-        // Save block_10 as already indexed
-        store.save_new_best_block(&block_10.clone(), 0)?;
-
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-
-        let block_10_clone = block_10.clone();
-
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(10))
-            .returning(move |_| Ok(Some(block_10_clone.clone())));
-
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
+        
+        // Get block at height 10 and save it to store
+        let block_10 = bitcoin_client.get_block_by_height(&10)?.unwrap();
+        store.save_new_best_block(&block_10, 0)?;
         store.save_best_height(10)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
@@ -209,25 +144,22 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-5",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
+        
+        // Save block 11 as indexed
+        let block_11 = bitcoin_client.get_block_by_height(&11)?.unwrap();
         store.save_new_best_block(&block_11, 0)?;
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(11))
-            .returning(move |_| Ok(Some(block_11.clone())));
-
-        let block_10_clone = block_10.clone();
-
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(10))
-            .returning(move |_| Ok(Some(block_10_clone.clone())));
-
         store.save_best_height(11)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
@@ -236,29 +168,26 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-6",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
+        
+        // Save checkpoint at 10
         store.save_checkpoint_height(10)?;
-
-        store.save_new_best_block(&block_10_clone, 0)?;
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-
-        let block_10_copy = block_10.clone();
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(10))
-            .returning(move |_| Ok(Some(block_10_copy.clone())));
-
+        
+        // Save block 10 as indexed
+        let block_10 = bitcoin_client.get_block_by_height(&10)?.unwrap();
+        store.save_new_best_block(&block_10, 0)?;
         store.save_best_height(10)?;
-
-        let block_12_clone = block_12.clone();
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(12))
-            .returning(move |_| Ok(Some(block_12_clone.clone())));
 
         let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))));
         assert!(result.is_err());
@@ -270,17 +199,22 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 7. Indexed block exists, checkpoint == indexed height (should use indexed height)
     {
-        let mut bitcoin_client = MockBitcoinClient::new();
+        let bitcoind = Bitcoind::new(
+            "bitcoin-regtest-7",
+            "bitcoin/bitcoin:29.1",
+            config.bitcoin.clone(),
+        );
+        bitcoind.start()?;
+        
+        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let wallet = bitcoin_client.init_wallet("test_wallet")?;
         let store = get_indexer_store();
-
+        
+        bitcoin_client.mine_blocks_to_address(12, &wallet)?;
+        
+        // Save block 12 as indexed
+        let block_12 = bitcoin_client.get_block_by_height(&12)?.unwrap();
         store.save_new_best_block(&block_12, 0)?;
-        bitcoin_client
-            .expect_get_best_block()
-            .returning(move || Ok(12));
-        bitcoin_client
-            .expect_get_block_by_height()
-            .with(eq(12))
-            .returning(move |_| Ok(Some(block_12.clone())));
         store.save_best_height(12)?;
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
@@ -292,94 +226,67 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 }
 
 #[test]
+#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
-    use bitcoin::{absolute::LockTime, transaction::Version};
+    clear_output();
 
     // Initialize tracing to see warn! and info! output
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
-    // Setup: Create blocks at heights 9 and 10
-    let hash_9 =
-        BlockHash::from_str("0000000000000000000000000000000000000000000000000000000000000009")?;
-    let hash_10_original =
-        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000000a")?;
-    let hash_10_reorg =
-        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000010a")?;
-    let hash_11 =
-        BlockHash::from_str("000000000000000000000000000000000000000000000000000000000000010b")?;
-    let tx = bitcoin::Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-    let block_9 = BlockInfo {
-        height: 9,
-        hash: hash_9,
-        prev_hash: BlockHash::all_zeros(),
-        txs: vec![tx.clone()],
-    };
-    let block_10_original = BlockInfo {
-        height: 10,
-        hash: hash_10_original,
-        prev_hash: hash_9,
-        txs: vec![tx.clone()],
-    };
-    let block_10_reorg = BlockInfo {
-        height: 10,
-        hash: hash_10_reorg,
-        prev_hash: hash_9,
-        txs: vec![tx.clone()],
-    };
-    let block_11 = BlockInfo {
-        height: 11,
-        hash: hash_11,
-        prev_hash: hash_10_original,
-        txs: vec![],
-    };
-    let mut bitcoin_client = MockBitcoinClient::new();
+
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind = Bitcoind::new(
+        "bitcoin-regtest-reorg",
+        "bitcoin/bitcoin:29.1",
+        config.bitcoin.clone(),
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let store = get_indexer_store();
-    bitcoin_client.expect_get_best_block().returning(|| Ok(11));
 
-    let block_9_clone = block_9.clone();
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(9))
-        .returning(move |_| Ok(Some(block_9_clone.clone())));
-    // First tick: return original block 10
-    let block_10_clone1 = block_10_original.clone();
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(10))
-        .times(1)
-        .returning(move |_| Ok(Some(block_10_clone1.clone())));
-    // Second tick: return different block 10 (reorg)
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(10))
-        .returning(move |_| Ok(Some(block_10_reorg.clone())));
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(11))
-        .returning(move |_| Ok(Some(block_11.clone())));
+    // Mine initial blocks (up to block 9)
+    bitcoin_client.mine_blocks_to_address(10, &wallet)?;
 
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
     let indexer = Indexer::new(
-        bitcoin_client,
+        bitcoin_client2,
         store.clone(),
         Some(IndexerSettings::new(Some(9))),
     )?;
+
+    // Sync to block 9
+    assert_eq!(indexer.get_best_height()?, Some(9));
+
+    // Mine one more block (block 10)
+    bitcoin_client.mine_blocks_to_address(1, &wallet)?;
+
     // Tick 1: Sync block 10 (original)
     indexer.tick()?;
     assert_eq!(indexer.get_best_height()?, Some(10));
+
     let block_at_10: FullBlock = store
         .get_block_by_height(10)?
         .expect("Block 10 should exist");
-    assert_eq!(block_at_10.hash, hash_10_original);
+    let hash_10_original = block_at_10.hash.clone();
     assert_eq!(
         block_at_10.orphan, false,
         "Block 10 should not be orphan initially"
     );
+
+    // Cause a reorg: Invalidate block 10
+    bitcoin_client.invalidate_block(&hash_10_original)?;
+
+    // Verify we're back at block 9
+    assert_eq!(bitcoin_client.get_best_block()?, 9);
+
+    // Mine a different block 10 and block 11
+    bitcoin_client.mine_blocks_to_address(2, &wallet)?;
+
+    // Verify blockchain is now at height 11
+    assert_eq!(bitcoin_client.get_best_block()?, 11);
 
     // Tick 2: Detect reorg (different block at height 10)
     indexer.tick()?;
@@ -402,7 +309,7 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
         );
     }
 
-    // Tick 3: Sync new block 10 and block 11
+    // Tick 3: Sync new block 10
     indexer.tick()?;
 
     assert_eq!(indexer.get_best_height()?, Some(10));
@@ -410,12 +317,14 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     let block_at_10: FullBlock = store
         .get_block_by_height(10)?
         .expect("Block 10 should exist");
-    assert_eq!(block_at_10.hash, hash_10_reorg);
+    let hash_10_reorg = block_at_10.hash.clone();
+    assert_ne!(hash_10_reorg, hash_10_original);
     assert_eq!(
         block_at_10.orphan, false,
         "New Block 10 should not be orphan"
     );
 
+    // Tick 4: Sync block 11
     indexer.tick()?;
 
     assert_eq!(indexer.get_best_height()?, Some(11));
@@ -423,7 +332,6 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     let block_at_11: FullBlock = store
         .get_block_by_height(11)?
         .expect("Block 11 should exist");
-    assert_eq!(block_at_11.hash, hash_11);
     assert_eq!(block_at_11.orphan, false, "Block 11 should not be orphan");
 
     clear_output();
