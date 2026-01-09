@@ -4,7 +4,7 @@ use bitcoin_indexer::{
     indexer::{Indexer, IndexerApi},
     store::IndexerStore,
 };
-use bitcoind::bitcoind::Bitcoind;
+use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
     types::BlockHeight,
@@ -24,10 +24,12 @@ fn main() -> Result<(), anyhow::Error> {
 
     tracing_subscriber::fmt().with_max_level(log_level).init();
 
+    let bitcoind_config = BitcoindConfig::default();
+
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
+        bitcoind_config,
         config.bitcoin.clone(),
+        None
     );
 
     bitcoind.start()?;
