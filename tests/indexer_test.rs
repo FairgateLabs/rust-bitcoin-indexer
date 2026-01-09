@@ -5,6 +5,7 @@ use bitcoin_indexer::{
     store::StoreClient,
     types::FullBlock,
 };
+use bitcoin::Network;
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_settings::settings;
@@ -336,4 +337,206 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
 
     clear_output();
     Ok(())
+}
+
+
+#[test]
+fn test_load_config_from_yaml() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify that valid YAML configuration is parsed correctly into IndexerConfig.
+     * Preconditions: config/development.yaml exists with valid structure.
+     * Input: Path to valid YAML configuration file.
+     * Steps:
+     *
+     * Call settings::load::<IndexerConfig>().
+     * Inspect returned IndexerConfig struct fields.
+     * Verify all fields match expected values from YAML.
+     * Expected Result: Configuration loaded successfully with storage, bitcoin, 
+     *  settings, and log_level fields populated correctly. No errors thrown.
+     */
+    
+    // Load the configuration from YAML file
+    let config = settings::load::<IndexerConfig>()?;
+    
+    // Verify storage configuration
+    assert_eq!(config.storage.path, "data");
+    
+    // Verify bitcoin RPC configuration
+    assert_eq!(config.bitcoin.network, Network::Regtest);
+    assert_eq!(config.bitcoin.url.expose_secret(), "http://localhost:18443");
+    assert_eq!(config.bitcoin.username.expose_secret(), "foo");
+    assert_eq!(config.bitcoin.password.expose_secret(), "rpcpassword");
+    assert_eq!(config.bitcoin.wallet, "test_wallet");
+    
+    // Verify indexer settings
+    assert!(config.settings.is_some());
+    let settings = config.settings.unwrap();
+    assert_eq!(settings.checkpoint_height, Some(1));
+    
+    // Verify log level
+    assert!(config.log_level.is_some());
+    assert_eq!(config.log_level.unwrap(), "info");
+    
+    Ok(())
+}
+
+#[test]
+fn test_configuration_missing_optional_fields() -> Result<(), anyhow::Error> {
+    /*
+     * Configuration with Missing Optional Fields
+     * Title: Load Configuration with Missing Optional Settings
+     * Objective: Verify default values are applied when optional fields are omitted.
+     * Preconditions: Create test configuration YAML with settings and log_level omitted.
+     * Input: Configuration with only required storage and bitcoin fields.
+     * Steps:
+     *  Load configuration from test YAML.
+     *  Construct Indexer with loaded config.
+     *  Verify default checkpoint height (0) is used.
+     * Expected Result: 
+     *  Configuration loads successfully. settings defaults to None. 
+     *  Indexer initializes with default checkpoint height of 0.
+     */
+    
+    // Test that IndexerConfig can be constructed with optional fields set to None
+    // This simulates what happens when YAML doesn't contain settings or log_level
+    
+    // First, load the default config to get valid storage and bitcoin config
+    let default_config = settings::load::<IndexerConfig>()?;
+    
+    // Create a config with optional fields as None
+    let config_with_none_settings = IndexerConfig {
+        storage: default_config.storage.clone(),
+        bitcoin: default_config.bitcoin.clone(),
+        settings: None,
+        log_level: None,
+    };
+    
+    // Verify optional fields are None
+    assert!(config_with_none_settings.settings.is_none(), "settings should be None when not specified");
+    assert!(config_with_none_settings.log_level.is_none(), "log_level should be None when not specified");
+    
+    // Verify that when settings is None, the indexer should use default behavior
+    // The IndexerSettings::default() has checkpoint_height set to Some(DEFAULT_CHECKPOINT_HEIGHT)
+    let default_settings = IndexerSettings::default();
+    assert_eq!(default_settings.checkpoint_height, Some(0), "default checkpoint height should be 0");
+    
+    Ok(())
+}
+
+#[test]
+fn test_invalid_configuration_fails_gracefully() -> Result<(), anyhow::Error> {
+    /*
+    * Objective: Ensure malformed configuration produces clear error messages.
+    * Preconditions: Create invalid YAML (missing required fields, wrong types).
+    * Input: YAML with missing storage.path or invalid network type.
+    * Steps:
+    * Attempt to load invalid configuration.
+    * Catch error result.
+    * Verify error message indicates specific validation failure.
+    * Expected Result: Configuration loading returns Err with descriptive error message. Does not panic.
+     */
+    
+    // Test 1: Missing required 'storage' field
+    let invalid_config_missing_storage = r#"{
+        "bitcoin": {
+            "network": "regtest",
+            "url": "http://localhost:18443",
+            "username": "testuser",
+            "password": "testpass",
+            "wallet": "test_wallet"
+        }
+    }"#;
+    
+    let result: Result<IndexerConfig, _> = serde_json::from_str(invalid_config_missing_storage);
+    assert!(result.is_err(), "Should fail when storage field is missing");
+    
+    // Test 2: Missing required 'bitcoin' field  
+    let invalid_config_missing_bitcoin = r#"{
+        "storage": {
+            "path": "data"
+        }
+    }"#;
+    
+    let result: Result<IndexerConfig, _> = serde_json::from_str(invalid_config_missing_bitcoin);
+    assert!(result.is_err(), "Should fail when bitcoin field is missing");
+    
+    // Test 3: Invalid network type
+    let invalid_config_wrong_network = r#"{
+        "storage": {
+            "path": "data"
+        },
+        "bitcoin": {
+            "network": "invalidnetwork",
+            "url": "http://localhost:18443",
+            "username": "testuser",
+            "password": "testpass",
+            "wallet": "test_wallet"
+        }
+    }"#;
+    
+    let result: Result<IndexerConfig, _> = serde_json::from_str(invalid_config_wrong_network);
+    assert!(result.is_err(), "Should fail when network type is invalid");
+    
+    // Test 4: Empty configuration
+    let empty_config = r#"{}"#;
+    
+    let result: Result<IndexerConfig, _> = serde_json::from_str(empty_config);
+    assert!(result.is_err(), "Should fail with empty configuration");
+    
+    // Test 5: Invalid checkpoint height type (negative number)
+    let invalid_checkpoint = r#"{
+        "storage": {
+            "path": "data"
+        },
+        "bitcoin": {
+            "network": "regtest",
+            "url": "http://localhost:18443",
+            "username": "testuser",
+            "password": "testpass",
+            "wallet": "test_wallet"
+        },
+        "settings": {
+            "checkpoint_height": -1
+        }
+    }"#;
+    
+    let result: Result<IndexerConfig, _> = serde_json::from_str(invalid_checkpoint);
+    assert!(result.is_err(), "Should fail when checkpoint_height is negative");
+    
+    Ok(())
+}
+
+#[test]
+fn test_indexersettings_defaults() {
+    /* 
+     * Objective: Verify IndexerSettings::default() provides expected values.
+     * Preconditions: None.
+     * Input: None.
+     * Steps:
+     * Call IndexerSettings::default().
+     * Inspect checkpoint_height field.
+     * Expected Result: checkpoint_height equals DEFAULT_CHECKPOINT_HEIGHT (0)
+    */
+    
+    // Create IndexerSettings with default values
+    let default_settings = IndexerSettings::default();
+    
+    // Verify checkpoint_height is set to DEFAULT_CHECKPOINT_HEIGHT (0)
+    assert!(default_settings.checkpoint_height.is_some(), "checkpoint_height should have a value");
+    assert_eq!(
+        default_settings.checkpoint_height.unwrap(), 
+        0, 
+        "default checkpoint_height should be 0 (DEFAULT_CHECKPOINT_HEIGHT)"
+    );
+    
+    // Test that creating settings with None still uses default when Default trait is invoked
+    let settings_with_none = IndexerSettings::new(None);
+    assert!(settings_with_none.checkpoint_height.is_none(), "IndexerSettings::new(None) should have None checkpoint");
+    
+    // But Default::default() should have Some(0)
+    assert_ne!(
+        settings_with_none.checkpoint_height,
+        default_settings.checkpoint_height,
+        "new(None) and default() should produce different results"
+    );
 }

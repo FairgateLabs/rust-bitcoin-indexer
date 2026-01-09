@@ -1,0 +1,11 @@
+
+    storage:
+        path: test_data
+
+    bitcoin:
+        network: regtest
+        url: http://localhost:18443
+        username: testuser
+        password: testpass
+        wallet: test_wallet
+    
