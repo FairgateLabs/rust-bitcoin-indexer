@@ -29,6 +29,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
 
     let bitcoind = Bitcoind::new(
         bitcoind_config,
+        config.bitcoin.clone(),
         None
     );
 
