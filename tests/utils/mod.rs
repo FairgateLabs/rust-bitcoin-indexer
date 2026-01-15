@@ -19,7 +19,13 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
         "test_output/get_best_block_height_test/{}",
         generate_random_string()
     );
-    let config = StorageConfig::new(path, None);
+    // Convert to absolute path for Windows compatibility
+    let absolute_path = std::fs::canonicalize(".")
+        .unwrap()
+        .join(&path);
+    // Create the full directory path before initializing Storage
+    std::fs::create_dir_all(&absolute_path).unwrap();
+    let config = StorageConfig::new(absolute_path.to_string_lossy().to_string(), None);
     let store = Rc::new(Storage::new(&config).unwrap());
     let indexer_store = IndexerStore::new(store).unwrap();
 
