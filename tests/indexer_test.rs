@@ -19,10 +19,15 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
     clear_output();
     
     let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+        "bitcoin-regtest".to_string(),
+        "bitcoin/bitcoin:29.1".to_string(),
+        None,
+    );
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest",
-        "bitcoin/bitcoin:29.1",
+        bitcoind_config,
         config.bitcoin.clone(),
+        None,
     );
     bitcoind.start()?;
 
@@ -63,10 +68,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 1. No indexed block, no checkpoint (should start from genesis)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-1".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-1",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -83,10 +93,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 2. No indexed block, checkpoint = 11 (should start from 11)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-2".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-2",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -102,10 +117,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 3. No indexed block, checkpoint > blockchain height (should error)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-3".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-3",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -121,10 +141,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 4. Indexed block exists, checkpoint is None (should start from indexed height)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-4".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-4",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -145,10 +170,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-5".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-5",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -169,10 +199,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-6".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-6",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -200,10 +235,15 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
     // 7. Indexed block exists, checkpoint == indexed height (should use indexed height)
     {
+        let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+            "bitcoin-regtest-7".to_string(),
+            "bitcoin/bitcoin:29.1".to_string(),
+            None,
+        );
         let bitcoind = Bitcoind::new(
-            "bitcoin-regtest-7",
-            "bitcoin/bitcoin:29.1",
+            bitcoind_config,
             config.bitcoin.clone(),
+            None,
         );
         bitcoind.start()?;
         
@@ -237,10 +277,15 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
         .try_init();
 
     let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+        "bitcoin-regtest-reorg".to_string(),
+        "bitcoin/bitcoin:29.1".to_string(),
+        None,
+    );
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest-reorg",
-        "bitcoin/bitcoin:29.1",
+        bitcoind_config,
         config.bitcoin.clone(),
+        None,
     );
     bitcoind.start()?;
 
@@ -1287,10 +1332,15 @@ fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
     clear_output();
     
     let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+        "bitcoin-regtest-checkpoint".to_string(),
+        "bitcoin/bitcoin:29.1".to_string(),
+        None,
+    );
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest-checkpoint",
-        "bitcoin/bitcoin:29.1",
+        bitcoind_config,
         config.bitcoin.clone(),
+        None,
     );
     bitcoind.start()?;
 
@@ -1360,10 +1410,15 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
     clear_output();
     
     let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::new(
+        "bitcoin-regtest-corrupted".to_string(),
+        "bitcoin/bitcoin:29.1".to_string(),
+        None,
+    );
     let bitcoind = Bitcoind::new(
-        "bitcoin-regtest-corrupted",
-        "bitcoin/bitcoin:29.1",
+        bitcoind_config,
         config.bitcoin.clone(),
+        None,
     );
     bitcoind.start()?;
 

@@ -22,13 +22,30 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
         .join("get_best_block_height_test")
         .join(generate_random_string());
     
-    // Create the full directory path
-    std::fs::create_dir_all(&absolute_path).expect("Failed to create directory");
-    
-    // On Windows, add a small delay to ensure the directory is fully created and accessible
-    // This prevents RocksDB "No such file or directory" errors
+    // On Windows, directory operations can be async, so retry if needed
     #[cfg(target_os = "windows")]
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    {
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 5;
+        loop {
+            match std::fs::create_dir_all(&absolute_path) {
+                Ok(_) => break,
+                Err(e) if attempts < MAX_ATTEMPTS => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if attempts == MAX_ATTEMPTS {
+                        panic!("Failed to create directory after {} attempts: {}", MAX_ATTEMPTS, e);
+                    }
+                }
+                Err(e) => panic!("Failed to create directory: {}", e),
+            }
+        }
+        // Add delay to ensure directory is fully created and accessible
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    std::fs::create_dir_all(&absolute_path).expect("Failed to create directory");
     
     // Convert to string and normalize to forward slashes for RocksDB
     let path_str = absolute_path.to_string_lossy().replace('\\', "/");
@@ -41,7 +58,22 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
 }
 
 pub fn clear_output() {
-    let _ = std::fs::remove_dir_all("test_output");
+    // On Windows, add retry logic for directory removal
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(_) = std::fs::remove_dir_all("test_output") {
+            // If first attempt fails, wait and retry
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let _ = std::fs::remove_dir_all("test_output");
+        }
+        // Give Windows time to complete the deletion
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::fs::remove_dir_all("test_output");
+    }
 }
 
 pub fn get_random_pubkey() -> PublicKey {
