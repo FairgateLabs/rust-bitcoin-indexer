@@ -790,7 +790,6 @@ fn test_resume_from_existing_indexed_height() -> Result<(), anyhow::Error> {
     
     bitcoin_client
         .expect_get_best_block()
-        .times(1)
         .returning(|| Ok(76));
     
     let block_75_hash_clone = block_75_hash;
@@ -798,7 +797,6 @@ fn test_resume_from_existing_indexed_height() -> Result<(), anyhow::Error> {
     bitcoin_client
         .expect_get_block_by_height()
         .withf(move |h| *h == 75)
-        .times(1)
         .returning(move |_| {
             Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
                 hash: block_75_hash_clone,
@@ -840,7 +838,6 @@ fn test_resume_from_existing_indexed_height() -> Result<(), anyhow::Error> {
     bitcoin_client2
         .expect_get_block_by_height()
         .withf(move |h| *h == 75)
-        .times(1)
         .returning(move |_| {
             Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
                 hash: block_75_hash_clone2,
@@ -1098,8 +1095,8 @@ fn test_block_hash_mismatch_at_indexed_height() -> Result<(), anyhow::Error> {
         panic!("Expected Err but got Ok");
     };
     assert!(
-        matches!(error, IndexerError::InconsistentBlockchain),
-        "Error should be InconsistentBlockchain (block hash mismatch), got: {:?}",
+        matches!(error, IndexerError::IndexedBlockHashMismatch),
+        "Error should be IndexedBlockHashMismatch (block hash mismatch), got: {:?}",
         error
     );
 
@@ -1138,7 +1135,6 @@ fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
     // Mock get_best_block to return height 150 for initialization
     bitcoin_client
         .expect_get_best_block()
-        .times(1)
         .returning(|| Ok(150));
     
     // Mock get_block_by_height for block 100 (checkpoint)
@@ -1147,7 +1143,6 @@ fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
     bitcoin_client
         .expect_get_block_by_height()
         .withf(move |h| *h == 100)
-        .times(1)
         .returning(move |_| {
             Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
                 hash: block_100_hash_clone,
@@ -1159,18 +1154,12 @@ fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
     
     // Mock blocks 101-120 for ticking
     for i in 101..=120 {
-        let block_hash = BlockHash::from_str(&format!("0000000000000000001{:02}a335e3a4fc328bf5beb436012afca590b1a11466e22", i))?;
-        let prev_hash = BlockHash::from_str(&format!("0000000000000000001{:02}a335e3a4fc328bf5beb436012afca590b1a11466e22", i - 1))?;
-        
-        bitcoin_client
-            .expect_get_best_block()
-            .times(1)
-            .returning(move || Ok(150));
+        let block_hash = BlockHash::from_str(&format!("000000000000000000{:03}a335e3a4fc328bf5beb436012afca590b1a11466e22", i))?;
+        let prev_hash = BlockHash::from_str(&format!("000000000000000000{:03}a335e3a4fc328bf5beb436012afca590b1a11466e22", i - 1))?;
         
         bitcoin_client
             .expect_get_block_by_height()
             .withf(move |h| *h == i)
-            .times(1)
             .returning(move |_| {
                 Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
                     hash: block_hash,
@@ -1216,38 +1205,42 @@ fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
         .times(2)
         .returning(|| Ok(150));
     
-    // Mock get_block_by_height for block 120 (verification during init)
+    // Mock get_block_by_height for block 120 (verification during init and tick)
     let block_120_hash = BlockHash::from_str("000000000000000000120a335e3a4fc328bf5beb436012afca590b1a11466e22")?;
     let block_119_hash = BlockHash::from_str("000000000000000000119a335e3a4fc328bf5beb436012afca590b1a11466e22")?;
     
-    let block_120_hash_clone = block_120_hash;
-    let block_119_hash_clone = block_119_hash;
-    bitcoin_client2
-        .expect_get_block_by_height()
-        .withf(move |h| *h == 120)
-        .times(1)
-        .returning(move |_| {
-            Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
-                hash: block_120_hash_clone,
-                height: 120,
-                prev_hash: block_119_hash_clone,
-                txs: vec![],
-            }))
-        });
+    // Need to handle multiple calls to get_block_by_height(120):
+    // 1. During Indexer::new to verify indexed height
+    // 2. During first tick to check for reorgs
+    for _ in 0..2 {
+        let block_120_hash_clone = block_120_hash;
+        let block_119_hash_clone = block_119_hash;
+        bitcoin_client2
+            .expect_get_block_by_height()
+            .withf(move |h| *h == 120)
+            .times(1)
+            .returning(move |_| {
+                Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
+                    hash: block_120_hash_clone,
+                    height: 120,
+                    prev_hash: block_119_hash_clone,
+                    txs: vec![],
+                }))
+            });
+    }
     
     // Mock block 121 for tick
     let block_121_hash = BlockHash::from_str("000000000000000000121a335e3a4fc328bf5beb436012afca590b1a11466e22")?;
-    let block_121_hash_clone = block_121_hash;
-    let block_120_hash_clone2 = block_120_hash;
+    let block_120_hash_for_121 = block_120_hash;
     bitcoin_client2
         .expect_get_block_by_height()
         .withf(move |h| *h == 121)
         .times(1)
         .returning(move |_| {
             Ok(Some(bitvmx_bitcoin_rpc::types::BlockInfo {
-                hash: block_121_hash_clone,
+                hash: block_121_hash,
                 height: 121,
-                prev_hash: block_120_hash_clone2,
+                prev_hash: block_120_hash_for_121,
                 txs: vec![],
             }))
         });
@@ -1382,7 +1375,15 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
         "test_output/get_best_block_height_test/{}",
         utils::generate_random_string()
     );
-    let storage_config = storage_backend::storage_config::StorageConfig::new(store_path.clone(), None);
+    // Create the directory before initializing Storage
+    std::fs::create_dir_all(&store_path)?;
+    
+    // Build absolute path and normalize to forward slashes for Storage backend
+    let current_dir = std::env::current_dir()?;
+    let absolute_store_path = current_dir.join(&store_path);
+    let path_str = absolute_store_path.to_string_lossy().replace('\\', "/");
+    
+    let storage_config = storage_backend::storage_config::StorageConfig::new(path_str, None);
     let storage = std::rc::Rc::new(storage_backend::storage::Storage::new(&storage_config)?);
     let store = std::rc::Rc::new(IndexerStore::new(storage.clone())?);
 

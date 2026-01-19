@@ -15,17 +15,25 @@ pub fn generate_random_string() -> String {
 }
 
 pub fn get_indexer_store() -> Rc<IndexerStore> {
-    let path = format!(
-        "test_output/get_best_block_height_test/{}",
-        generate_random_string()
-    );
-    // Convert to absolute path for Windows compatibility
-    let absolute_path = std::fs::canonicalize(".")
-        .unwrap()
-        .join(&path);
-    // Create the full directory path before initializing Storage
-    std::fs::create_dir_all(&absolute_path).unwrap();
-    let config = StorageConfig::new(absolute_path.to_string_lossy().to_string(), None);
+    // Build the path using PathBuf to handle separators correctly
+    let current_dir = std::env::current_dir().expect("Failed to get current directory");
+    let absolute_path = current_dir
+        .join("test_output")
+        .join("get_best_block_height_test")
+        .join(generate_random_string());
+    
+    // Create the full directory path
+    std::fs::create_dir_all(&absolute_path).expect("Failed to create directory");
+    
+    // On Windows, add a small delay to ensure the directory is fully created and accessible
+    // This prevents RocksDB "No such file or directory" errors
+    #[cfg(target_os = "windows")]
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    
+    // Convert to string and normalize to forward slashes for RocksDB
+    let path_str = absolute_path.to_string_lossy().replace('\\', "/");
+    
+    let config = StorageConfig::new(path_str, None);
     let store = Rc::new(Storage::new(&config).unwrap());
     let indexer_store = IndexerStore::new(store).unwrap();
 
