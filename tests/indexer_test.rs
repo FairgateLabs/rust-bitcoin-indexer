@@ -10,11 +10,10 @@ use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_settings::settings;
 mod utils;
-use crate::utils::clear_output;
+use crate::utils::{clear_output, wait_for_port_available};
 use utils::get_indexer_store;
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_get_best_block() -> Result<(), anyhow::Error> {
     clear_output();
     
@@ -55,12 +54,12 @@ fn test_get_best_block() -> Result<(), anyhow::Error> {
     assert!(best_block.is_some());
     assert_eq!(best_block.unwrap().height, 101);
 
+    bitcoind.stop()?;
     clear_output();
     Ok(())
 }
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
     clear_output();
     
@@ -89,6 +88,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         // Should have saved height_to_sync = 0
         assert_eq!(indexer.get_best_height()?, Some(0));
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 2. No indexed block, checkpoint = 11 (should start from 11)
@@ -113,6 +114,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(11))))?;
         assert_eq!(indexer.get_best_height()?, Some(11));
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 3. No indexed block, checkpoint > blockchain height (should error)
@@ -137,6 +140,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         let result = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(20))));
         assert!(result.is_err());
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 4. Indexed block exists, checkpoint is None (should start from indexed height)
@@ -166,6 +171,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(None)))?;
         assert_eq!(indexer.get_best_height()?, Some(10));
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 5. Indexed block exists, checkpoint does not exist in the database and passing a checkpoint height (should use indexed height) and warn user
@@ -195,6 +202,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(10))))?;
         assert_eq!(indexer.get_best_height()?, Some(11));
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 6. Indexed block exists, checkpoint exist and is different from the previous checkpoint height (should error)
@@ -231,6 +240,8 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
             result,
             Err(IndexerError::AlreadyIndexedWithDifferentCheckpointHeight)
         ));
+        bitcoind.stop()?;
+        assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     }
 
     // 7. Indexed block exists, checkpoint == indexed height (should use indexed height)
@@ -260,6 +271,7 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 
         let indexer = Indexer::new(bitcoin_client, store, Some(IndexerSettings::new(Some(12))))?;
         assert_eq!(indexer.get_best_height()?, Some(12));
+        bitcoind.stop()?;
     }
 
     clear_output();
@@ -267,7 +279,6 @@ fn indexer_constructor_checkpoint_variants() -> Result<(), anyhow::Error> {
 }
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     clear_output();
 
@@ -328,8 +339,10 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     // Verify we're back at block 9
     assert_eq!(bitcoin_client.get_best_block()?, 9);
 
-    // Mine a different block 10 and block 11
-    bitcoin_client.mine_blocks_to_address(2, &wallet)?;
+    // Mine a different block 10 and block 11 with a new wallet address
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(2, &new_wallet)?;
 
     // Verify blockchain is now at height 11
     assert_eq!(bitcoin_client.get_best_block()?, 11);
@@ -380,6 +393,7 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
         .expect("Block 11 should exist");
     assert_eq!(block_at_11.orphan, false, "Block 11 should not be orphan");
 
+    bitcoind.stop()?;
     clear_output();
     Ok(())
 }
@@ -1315,7 +1329,6 @@ fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
 }
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
     /*
      * Objective: Ensure indexer rejects different checkpoint if one already exists.
@@ -1389,12 +1402,12 @@ fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
         Err(IndexerError::AlreadyIndexedWithDifferentCheckpointHeight)
     ));
 
+    bitcoind.stop()?;
     clear_output();
     Ok(())
 }
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow::Error> {
     /*
      * Objective: Detect corrupted storage when height exists but hash missing.
@@ -1484,6 +1497,7 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
         Err(IndexerError::DatabaseCorrupted)
     ));
 
+    bitcoind.stop()?;
     clear_output();
     Ok(())
 }

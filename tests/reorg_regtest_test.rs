@@ -12,7 +12,7 @@ mod utils;
 use crate::utils::{clear_output, get_indexer_store, get_random_pubkey};
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
+//#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn reorganization_test() -> Result<(), anyhow::Error> {
     clear_output();
 
@@ -119,6 +119,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     assert_eq!(indexer.get_best_height()?, Some(140));
     assert_eq!(bitcoin_client.get_best_block()?, 140);
 
+    bitcoind.stop()?;
     clear_output();
 
     Ok(())
