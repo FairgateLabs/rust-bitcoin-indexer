@@ -212,27 +212,21 @@ where
     }
 
     fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionInfo, IndexerError> {
-        // Check if transaction is in mempool
-        // get_mempool_entry returns an error if the transaction is not in mempool
-        let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
-
-        if tx_mempool_status.is_ok() {
-            // Transaction is in mempool but not yet in a block
-            return Ok(TransactionInfo {
-                tx: None,
-                block_info: None,
-                confirmations: 0,
-                status: TransactionBlockchainStatus::InMempool,
-                confirmation_threshold: self.settings.confirmation_threshold,
-            });
-        }
-
+        // First, check if transaction is in storage
         let tx_status = self.store.get_tx_info(tx_id)?;
 
         if let Some(mut tx_info) = tx_status {
             // Update status based on confirmations and threshold
             if tx_info.status == TransactionBlockchainStatus::Orphan {
-                // Status already set to Orphan in store
+                // If transaction is orphan, check if it's in mempool
+                let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
+
+                if tx_mempool_status.is_err() {
+                    // Transaction is not in mempool, mark as not found
+                    tx_info.status = TransactionBlockchainStatus::NotFound;
+                    tx_info.confirmations = 0;
+                    tx_info.block_info = None;
+                }
             } else if tx_info.confirmations >= self.settings.confirmation_threshold {
                 tx_info.status = TransactionBlockchainStatus::Finalized;
             } else {
@@ -243,12 +237,18 @@ where
 
             Ok(tx_info)
         } else {
-            // Transaction not found in store and not in mempool
+            // Transaction not found in storage, check mempool
+            let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
+            let status = if tx_mempool_status.is_ok() {
+                TransactionBlockchainStatus::InMempool
+            } else {
+                TransactionBlockchainStatus::NotFound
+            };
             Ok(TransactionInfo {
                 tx: None,
                 block_info: None,
                 confirmations: 0,
-                status: TransactionBlockchainStatus::NotFound,
+                status,
                 confirmation_threshold: self.settings.confirmation_threshold,
             })
         }
