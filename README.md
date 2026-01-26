@@ -129,23 +129,6 @@ settings:
   confirmation_threshold: 6  # Transactions with 6+ confirmations are considered finalized
 ```
 
-## Transaction Status
-
-The `get_transaction` method returns a `TransactionInfo` struct that includes a `status` field indicating the transaction's state:
-
-- **`InMempool`**: The transaction is in the mempool and has not yet been confirmed in a block.
-- **`Confirmed`**: The transaction has been confirmed in a block but has fewer confirmations than the `confirmation_threshold`.
-- **`Finalized`**: The transaction has been confirmed with at least `confirmation_threshold` confirmations.
-- **`Orphan`**: The transaction was confirmed but a reorganization moved it out of the chain.
-- **`NotFound`**: The transaction is not present in the blockchain, not in the mempool, and has not been confirmed.
-
-The `TransactionInfo` struct contains:
-- `tx: Option<Transaction>` - The transaction data (if available)
-- `block_info: Option<FullBlock>` - Information about the block containing the transaction (if confirmed)
-- `confirmations: u32` - Number of confirmations (0 if not confirmed)
-- `status: TransactionBlockchainStatus` - The current status of the transaction
-- `confirmation_threshold: u32` - The confirmation threshold used to determine if a transaction is finalized
-
 ## Development Setup
 
 1. Clone the repository
