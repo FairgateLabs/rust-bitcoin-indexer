@@ -26,11 +26,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     let bitcoind_config = BitcoindConfig::default();
 
-    let bitcoind = Bitcoind::new(
-        bitcoind_config,
-        config.bitcoin.clone(),
-        None
-    );
+    let bitcoind = Bitcoind::new(bitcoind_config, config.bitcoin.clone(), None);
 
     bitcoind.start()?;
 

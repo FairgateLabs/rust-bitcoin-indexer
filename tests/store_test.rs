@@ -175,10 +175,10 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     // 1) Save block_1 and check get_tx_info method, transaction with tx_id should exist
     indexer_store.save_new_best_block(&block_1, 0)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_info.height, block_1.height);
-    assert_eq!(tx_info.block_info.orphan, false);
-    assert_eq!(tx_info.block_info.hash, block_1.hash);
+    assert_eq!(tx_info.tx.as_ref().unwrap().compute_txid(), tx_id);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().height, block_1.height);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().orphan, false);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().hash, block_1.hash);
     assert_eq!(tx_info.confirmations, 1);
 
     // Creating a new block for height 1
@@ -200,10 +200,10 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     indexer_store.save_new_best_block(&new_block_1, 0)?;
 
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_info.height, block_1.height);
-    assert_eq!(tx_info.block_info.orphan, true);
-    assert_eq!(tx_info.block_info.hash, block_1.hash);
+    assert_eq!(tx_info.tx.as_ref().unwrap().compute_txid(), tx_id);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().height, block_1.height);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().orphan, true);
+    assert_eq!(tx_info.block_info.as_ref().unwrap().hash, block_1.hash);
 
     // Create new block
     let block_hash_1 =
@@ -220,10 +220,16 @@ fn get_tx_info_test() -> Result<(), anyhow::Error> {
     // 3) Insert new_block_1_again and check get_tx_info, transaction tx_id should exist again and not be orphan anymore. It was included in a new block at the same height
     indexer_store.save_new_best_block(&new_block_1_again, 0)?;
     let tx_info = indexer_store.get_tx_info(&tx_id)?.unwrap();
-    assert_eq!(tx_info.tx.compute_txid(), tx_id);
-    assert_eq!(tx_info.block_info.height, new_block_1_again.height);
-    assert_eq!(tx_info.block_info.orphan, false);
-    assert_eq!(tx_info.block_info.hash, new_block_1_again.hash);
+    assert_eq!(tx_info.tx.as_ref().unwrap().compute_txid(), tx_id);
+    assert_eq!(
+        tx_info.block_info.as_ref().unwrap().height,
+        new_block_1_again.height
+    );
+    assert_eq!(tx_info.block_info.as_ref().unwrap().orphan, false);
+    assert_eq!(
+        tx_info.block_info.as_ref().unwrap().hash,
+        new_block_1_again.hash
+    );
 
     clear_output();
 

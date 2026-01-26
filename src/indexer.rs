@@ -2,7 +2,7 @@ use crate::{
     config::IndexerSettings,
     errors::IndexerError,
     store::{IndexerStore, StoreClient},
-    types::{FullBlock, TransactionInfo},
+    types::{FullBlock, TransactionBlockchainStatus, TransactionInfo},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
@@ -15,6 +15,7 @@ where
 {
     pub bitcoin_client: B,
     pub store: Rc<IndexerStore>,
+    pub settings: IndexerSettings,
 }
 
 #[automock]
@@ -47,8 +48,9 @@ pub trait IndexerApi {
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError>;
 
     /// Retrieves transaction information for a given transaction ID.
-    /// Returns `Ok(Some(TransactionInfo))` if the transaction is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
+    /// Returns `Ok(TransactionInfo)` with the transaction status, or an `IndexerError` if an error occurs.
+    /// If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
+    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionInfo, IndexerError>;
 
     /// Retrieves the estimated fee rate from the most recently indexed block.
     /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
@@ -175,6 +177,7 @@ where
         Ok(Self {
             bitcoin_client,
             store,
+            settings,
         })
     }
 }
@@ -208,8 +211,47 @@ where
         Ok(self.store.get_best_block()?)
     }
 
-    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
-        Ok(self.store.get_tx_info(tx_id)?)
+    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionInfo, IndexerError> {
+        // Check if transaction is in mempool
+        // get_mempool_entry returns an error if the transaction is not in mempool
+        let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
+
+        if tx_mempool_status.is_ok() {
+            // Transaction is in mempool but not yet in a block
+            return Ok(TransactionInfo {
+                tx: None,
+                block_info: None,
+                confirmations: 0,
+                status: TransactionBlockchainStatus::InMempool,
+                confirmation_threshold: self.settings.confirmation_threshold,
+            });
+        }
+
+        let tx_status = self.store.get_tx_info(tx_id)?;
+
+        if let Some(mut tx_info) = tx_status {
+            // Update status based on confirmations and threshold
+            if tx_info.status == TransactionBlockchainStatus::Orphan {
+                // Status already set to Orphan in store
+            } else if tx_info.confirmations >= self.settings.confirmation_threshold {
+                tx_info.status = TransactionBlockchainStatus::Finalized;
+            } else {
+                tx_info.status = TransactionBlockchainStatus::Confirmed;
+            }
+
+            // Update confirmation_threshold in tx_info
+            tx_info.confirmation_threshold = self.settings.confirmation_threshold;
+            Ok(tx_info)
+        } else {
+            // Transaction not found in store and not in mempool
+            Ok(TransactionInfo {
+                tx: None,
+                block_info: None,
+                confirmations: 0,
+                status: TransactionBlockchainStatus::NotFound,
+                confirmation_threshold: self.settings.confirmation_threshold,
+            })
+        }
     }
 
     fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {

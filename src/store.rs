@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
-use crate::types::{FullBlock, TransactionInfo};
+use crate::settings::DEFAULT_CONFIRMATION_THRESHOLD;
+use crate::types::{FullBlock, TransactionBlockchainStatus, TransactionInfo};
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
@@ -172,7 +173,7 @@ impl StoreClient for IndexerStore {
         let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key)?;
 
         if let Some((tx, block_hash)) = tx_data {
-            let mut block_info = match self.get_block_by_hash(&block_hash)? {
+            let block_info = match self.get_block_by_hash(&block_hash)? {
                 Some(block) => block,
                 None => return Err(IndexerStoreError::BlockNotFound),
             };
@@ -185,15 +186,19 @@ impl StoreClient for IndexerStore {
 
             // If the block is orphaned or its height is greater than the best block height,
             // this indicates a reorg or block invalidation where the blockchain has reverted.
-            if block_info.orphan || block_info.height > best_block_height {
+            let status = if block_info.orphan || block_info.height > best_block_height {
                 confirmations = 0;
-                block_info.orphan = true;
-            }
+                TransactionBlockchainStatus::Orphan
+            } else {
+                TransactionBlockchainStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
+            };
 
             Ok(Some(TransactionInfo {
-                tx,
-                block_info,
+                tx: Some(tx),
+                block_info: Some(block_info),
                 confirmations,
+                status,
+                confirmation_threshold: DEFAULT_CONFIRMATION_THRESHOLD, // Will be updated in indexer with actual threshold
             }))
         } else {
             Ok(None)

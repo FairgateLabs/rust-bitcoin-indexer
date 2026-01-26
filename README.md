@@ -29,9 +29,13 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 
 - **get_blockchain_best_height**: Retrieves the current best block height from the Bitcoin blockchain.
 
-- **get_height_to_sync**: Determines the next block height that needs to be synchronized.
+- **get_block_by_height**: Retrieves a block by its height.
 
-- **get_tx**: Retrieves transaction information for a given transaction ID.
+- **get_block_by_hash**: Retrieves a block by its hash.
+
+- **get_transaction**: Retrieves transaction information for a given transaction ID. Returns a `TransactionInfo` with the transaction status. If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
+
+- **get_estimated_fee_rate**: Retrieves the estimated fee rate from the most recently indexed block.
 
 ## Usage
 ```rust
@@ -72,21 +76,37 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
   let blockchain_best_height = indexer.get_blockchain_best_height()?;
   println!("Blockchain best height: {}", blockchain_best_height);
 
-  // Determine the next block height to sync
-  let height_to_sync = indexer.get_height_to_sync()?;
-  println!("Next block height to sync: {}", height_to_sync);
-
   // Example transaction ID (replace with a real one for actual use)
   let tx_id = "some_tx_id";
-  if let Some(tx_info) = indexer.get_tx(&tx_id.parse()?)? {
-      println!("Transaction info: {:?}", tx_info);
+  let tx_info = indexer.get_transaction(&tx_id.parse()?)?;
+  println!("Transaction status: {:?}", tx_info.status);
+  match tx_info.status {
+      TransactionBlockchainStatus::InMempool => {
+          println!("Transaction is in mempool");
+      }
+      TransactionBlockchainStatus::NotFound => {
+          println!("Transaction not found");
+      }
+      TransactionBlockchainStatus::Orphan => {
+          println!("Transaction is orphaned");
+      }
+      TransactionBlockchainStatus::Confirmed => {
+          println!("Transaction is confirmed with {} confirmations", 
+                   tx_info.confirmations);
+      }
+      TransactionBlockchainStatus::Finalized => {
+          println!("Transaction is finalized with {} confirmations", 
+                   tx_info.confirmations);
+      }
   }
 
 ```
 
-## Checkpoint Height Configuration
+## Configuration
 
-The `checkpoint_height` is an optional setting in the indexer configuration that specifies a specific block height from which the indexing process should start. This can be useful for syncing from a specific height. Here’s how it works:
+### Checkpoint Height
+
+The `checkpoint_height` is an optional setting in the indexer configuration that specifies a specific block height from which the indexing process should start. This can be useful for syncing from a specific height. Here's how it works:
 
 - **With Checkpoint Height**:
   - If `checkpoint_height` is set, the indexer will begin syncing from the specified block height.
@@ -94,21 +114,43 @@ The `checkpoint_height` is an optional setting in the indexer configuration that
   - Once a checkpoint is set and indexed, you cannot change it unless the database is cleared.
   
 - **Without Checkpoint Height**:
-  - If not set, indexing will start from the genesis block or from the last indexed height if there’s an existing index.
+  - If not set, indexing will start from the genesis block or from the last indexed height if there's an existing index.
 
-To configure this, set the `checkpoint_height` in your settings:
+### Confirmation Threshold
+
+The `confirmation_threshold` is a setting that determines when a transaction is considered "finalized". When a transaction has at least `confirmation_threshold` confirmations, its status will be set to `TransactionBlockchainStatus::Finalized`. Otherwise, it will be `TransactionBlockchainStatus::Confirmed`. The default value is `0`.
+
+To configure these settings:
 
 ```yaml
 # Example configuration in config.yaml
 settings:
   checkpoint_height: 2000
+  confirmation_threshold: 6  # Transactions with 6+ confirmations are considered finalized
 ```
+
+## Transaction Status
+
+The `get_transaction` method returns a `TransactionInfo` struct that includes a `status` field indicating the transaction's state:
+
+- **`InMempool`**: The transaction is in the mempool and has not yet been confirmed in a block.
+- **`Confirmed`**: The transaction has been confirmed in a block but has fewer confirmations than the `confirmation_threshold`.
+- **`Finalized`**: The transaction has been confirmed with at least `confirmation_threshold` confirmations.
+- **`Orphan`**: The transaction was confirmed but a reorganization moved it out of the chain.
+- **`NotFound`**: The transaction is not present in the blockchain, not in the mempool, and has not been confirmed.
+
+The `TransactionInfo` struct contains:
+- `tx: Option<Transaction>` - The transaction data (if available)
+- `block_info: Option<FullBlock>` - Information about the block containing the transaction (if confirmed)
+- `confirmations: u32` - Number of confirmations (0 if not confirmed)
+- `status: TransactionBlockchainStatus` - The current status of the transaction
+- `confirmation_threshold: u32` - The confirmation threshold used to determine if a transaction is finalized
 
 ## Development Setup
 
 1. Clone the repository
 2. Install dependencies: `cargo build`
-3. Run tests: `cargo test -- --ignored --test-threads=1`
+3. Run tests: `cargo test -- --test-threads=1`
 
 ## Examples
 - **get_estimated_fee_rate:**

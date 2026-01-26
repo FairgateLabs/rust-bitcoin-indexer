@@ -292,6 +292,7 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
     let new_indexer = Indexer {
         bitcoin_client: new_bitcoin_client,
         store: indexer.store.clone(),
+        settings: IndexerSettings::default(),
     };
 
     // Try to get estimated fee rate when indexer is not synced
