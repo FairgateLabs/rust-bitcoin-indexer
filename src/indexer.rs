@@ -239,8 +239,8 @@ where
                 tx_info.status = TransactionBlockchainStatus::Confirmed;
             }
 
-            // Update confirmation_threshold in tx_info
             tx_info.confirmation_threshold = self.settings.confirmation_threshold;
+
             Ok(tx_info)
         } else {
             // Transaction not found in store and not in mempool
