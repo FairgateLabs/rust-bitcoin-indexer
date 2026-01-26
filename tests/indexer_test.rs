@@ -565,6 +565,502 @@ fn test_indexersettings_defaults() {
 }
 
 #[test]
+fn test_initialize_from_genesis_no_checkpoint() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer begins at block 0 when no checkpoint is configured and no prior state exists.
+     * Preconditions: Empty storage. Bitcoin regtest node with 100 blocks.
+     * Input: checkpoint_height: None, regtest blockchain at height 100.
+     * Steps:
+     * Start Bitcoin Core in regtest mode and mine 100 blocks.
+     * Construct Indexer with IndexerSettings::new(None) pointing to regtest node.
+     * Query get_best_height().
+     * Verify block 0 is stored.
+     * Expected Result: Indexer initializes successfully. get_best_height() returns Some(0). Block 0 saved to storage with correct genesis block hash.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 100 blocks
+    bitcoin_client.mine_blocks_to_address(100, &wallet)?;
+
+    // Construct Indexer with no checkpoint (None)
+    let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client_clone,
+        store.clone(),
+        Some(IndexerSettings::new(None)),
+    )?;
+
+    // Verify indexer starts at block 0
+    assert_eq!(indexer.get_best_height()?, Some(0));
+
+    // Verify block 0 is stored with correct genesis block hash
+    let genesis_block = bitcoin_client.get_block_by_height(&0)?.unwrap();
+    let genesis_block_hash = genesis_block.hash;
+    let stored_hash = store.get_block_hash_by_height(0)?;
+    assert!(stored_hash.is_some());
+    assert_eq!(stored_hash.unwrap(), genesis_block_hash);
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_initialize_from_valid_checkpoint() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer begins at checkpoint height when checkpoint < blockchain height.
+     * Preconditions: Empty storage. Bitcoin regtest node with 150 blocks.
+     * Input: checkpoint_height: Some(100), regtest blockchain at height 150.
+     * Steps:
+     *  Start regtest node and mine 150 blocks.
+     *  Construct indexer with checkpoint_height: Some(100).
+     *  Verify checkpoint saved and best height = 100.
+     *  Query storage for block at height 100.
+     *  Expected Result: Indexer saves checkpoint height 100 to storage. get_best_height() returns Some(100). Block at height 100 saved with correct hash from regtest chain.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 150 blocks
+    bitcoin_client.mine_blocks_to_address(150, &wallet)?;
+
+    // Construct indexer with checkpoint_height = 100 using a separate client instance
+    let bitcoin_client_for_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client_for_indexer,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+
+    )?;
+
+    // Verify indexer starts at checkpoint height 100
+    assert_eq!(indexer.get_best_height()?, Some(100));
+
+    // Verify checkpoint is saved in storage
+    assert_eq!(store.get_checkpoint_height()?, Some(100));
+
+    // Verify block at height 100 is stored with correct hash from regtest chain
+    let block_100 = bitcoin_client.get_block_by_height(&100)?.unwrap();
+    let block_hash_100 = block_100.hash;
+    let stored_hash = store.get_block_hash_by_height(100)?;
+    assert!(stored_hash.is_some());
+    assert_eq!(stored_hash.unwrap(), block_hash_100);
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_checkpoint_ahead_of_blockchain_height_fails() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Ensure indexer rejects checkpoint ahead of blockchain tip.
+     * Preconditions: Empty storage. Bitcoin regtest node with only 50 blocks.
+     * Input: checkpoint_height: Some(100), regtest blockchain at height 50.
+     * Steps:
+     *  Start regtest node and mine only 50 blocks.
+     *  Attempt to construct indexer with checkpoint 100.
+     *  Catch error result.
+     * Expected Result: Construction fails with IndexerError::CheckpointHeightAheadOfBlockchainHeight. No storage mutations. Error message clearly indicates the issue.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine only 50 blocks
+    bitcoin_client.mine_blocks_to_address(50, &wallet)?;
+
+    // Attempt to construct indexer with checkpoint 100 (ahead of blockchain height 50)
+    let result = Indexer::new(
+        bitcoin_client,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+    );
+
+    // Verify construction fails with CheckpointHeightAheadOfBlockchainHeight
+    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight)
+    ));
+
+    // Verify no storage mutations occurred
+    assert_eq!(store.get_best_height()?, None);
+    assert_eq!(store.get_checkpoint_height()?, None);
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_resume_from_existing_indexed_height() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer continues from last indexed block when storage has prior state.
+     * Preconditions: Storage contains blocks 0-75 from previous run. Bitcoin regtest node at height 100.
+     * Input: Best height in storage = 75, no checkpoint, regtest blockchain at height 100.
+     * Steps:
+     *  Run indexer to sync blocks 0-75, then stop.
+     *  Mine 25 more blocks on regtest (total 100).
+     *  Construct new indexer instance pointing to same storage.
+     *  Verify best height is 75.
+     *  Verify block hash at height 75 matches regtest chain.
+     * Expected Result: Indexer initializes with best height = 75. No errors. Ready to sync block 76 on next tick.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 80 blocks initially
+    bitcoin_client.mine_blocks_to_address(80, &wallet)?;
+
+    // Step 1: Run indexer to sync blocks 0-75
+    {
+        let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let indexer = Indexer::new(
+            bitcoin_client_clone,
+            store.clone(),
+            Some(IndexerSettings::new(None)),
+        )?;
+        
+        // Sync up to height 75
+        for _ in 0..75 {
+            indexer.tick()?;
+        }
+        
+        // Verify we're at height 75
+        assert_eq!(indexer.get_best_height()?, Some(75));
+    }
+    // Indexer dropped here, simulating a stop
+
+    // Step 2: Mine 25 more blocks (total 105)
+    bitcoin_client.mine_blocks_to_address(25, &wallet)?;
+
+    // Step 3: Construct new indexer instance pointing to same storage
+    let bitcoin_client_new = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer_new = Indexer::new(
+        bitcoin_client,
+        store.clone(),
+        Some(IndexerSettings::new(None)),  // Changed from Some(100) to None
+    )?;
+
+    // Verify best height is 75 (resume from where we left off)
+    assert_eq!(indexer_new.get_best_height()?, Some(75));
+
+    // Verify block hash at height 75 matches regtest chain
+    let block_hash_75 = bitcoin_client_new.get_block_by_height(&75)?.unwrap().hash;
+    let stored_hash = store.get_block_hash_by_height(75)?;
+    assert!(stored_hash.is_some());
+    assert_eq!(stored_hash.unwrap(), block_hash_75);
+
+    // Verify we can continue syncing
+    indexer_new.tick()?;
+    assert_eq!(indexer_new.get_best_height()?, Some(76));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_indexed_height_exceeds_blockchain_height() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify error when indexed height > blockchain height (inconsistent state).
+     * Preconditions: Storage has blocks 0-120 from regtest chain. Current regtest node only has 100 blocks (simulating node reset or different chain).
+     * Input: Indexed height 120, regtest blockchain at height 100.
+     * Steps:
+     *  Sync indexer to height 120 on a regtest chain.
+     *  Reset regtest node or switch to different node with only 100 blocks.
+     *  Attempt to construct indexer pointing to new node.
+     * Expected Result: Construction fails with IndexerError::InconsistentBlockchain. Logs error message indicating indexer is ahead of blockchain.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 125 blocks
+    bitcoin_client.mine_blocks_to_address(125, &wallet)?;
+
+    // Step 1: Sync indexer to height 120
+    {
+        let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let indexer = Indexer::new(
+            bitcoin_client_clone,
+            store.clone(),
+            Some(IndexerSettings::new(None)),
+        )?;
+        
+        // Sync up to height 120
+        for _ in 0..120 {
+            indexer.tick()?;
+        }
+        
+        // Verify we're at height 120
+        assert_eq!(indexer.get_best_height()?, Some(120));
+    }
+
+    // Step 2: Simulate node reset by invalidating blocks back to 100
+    // This makes the blockchain height 100 while storage still has height 120
+    let block_101 = bitcoin_client.get_block_by_height(&101)?.unwrap();
+    let block_hash_101 = block_101.hash;
+    bitcoin_client.invalidate_block(&block_hash_101)?;
+
+    // Verify blockchain is now at height 100
+    let blockchain_height = bitcoin_client.get_blockchain_info()?.blocks;
+    assert_eq!(blockchain_height, 100);
+
+    // Step 3: Attempt to construct indexer (indexed height 120 > blockchain height 100)
+    let bitcoin_client_new = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let result = Indexer::new(
+        bitcoin_client_new,
+        store.clone(),
+        Some(IndexerSettings::new(None)),
+    );
+
+    // Verify construction fails with InconsistentBlockchain
+    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(IndexerError::InconsistentBlockchain)
+    ));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_block_hash_mismatch_at_indexed_height() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Ensure indexer detects when stored block hash differs from blockchain.
+     * Preconditions: Storage has block at height 50 from chain A. Regtest node has block at height 50 from chain B (after reorg or reset).
+     * Input: Indexed height 50 with hash from chain A, regtest returns different hash for height 50.
+     * Steps:
+     *  Sync indexer to height 50 on regtest chain A.
+     *  Invalidate blocks and mine alternative chain B on regtest such that height 50 has different hash.
+     *  Attempt to construct indexer.
+     * Expected Result: Construction fails with IndexerError::IndexedBlockHashMismatch. Error log shows mismatched hashes and indicates potential reorg or chain inconsistency.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 85 blocks
+    bitcoin_client.mine_blocks_to_address(85, &wallet)?;
+
+    // Step 1: Sync indexer to height 80
+    {
+        let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let indexer = Indexer::new(
+            bitcoin_client_clone,
+            store.clone(),
+            Some(IndexerSettings::new(None)),
+        )?;
+        
+        // Sync up to height 80
+        for _ in 0..80 {  // Changed from 81 to 80
+            indexer.tick()?;
+        }
+        
+        // Verify we're at height 80
+        assert_eq!(indexer.get_best_height()?, Some(80));
+    }
+
+    // Step 2: Create alternative chain by invalidating blocks from height 50 onwards
+    // and mining new blocks to create a reorg
+    let block_50 = bitcoin_client.get_block_by_height(&50)?.unwrap();
+    let block_hash_50 = block_50.hash;
+    bitcoin_client.invalidate_block(&block_hash_50)?;
+
+    // Mine alternative chain with different blocks at height 50 and beyond
+    // Use a new address to ensure different transactions and thus different block hashes
+    let user_pubkey = utils::get_random_pubkey();
+    let wallet_new = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(40, &wallet_new)?;
+
+    // Verify blockchain is back at height ~89 but block 50 has a different hash
+    let new_block_50 = bitcoin_client.get_block_by_height(&50)?.unwrap();
+    let new_block_hash_50 = new_block_50.hash;
+    assert_ne!(block_hash_50, new_block_hash_50);
+
+    // Step 3: Attempt to construct indexer (stored hash at 80 won't match chain)
+    let bitcoin_client_new = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let result = Indexer::new(
+        bitcoin_client_new,
+        store.clone(),
+        Some(IndexerSettings::new(None)),
+    );
+
+    // Verify construction fails with IndexedBlockHashMismatch
+    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(IndexerError::IndexedBlockHashMismatch)
+    ));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_checkpoint_already_exists_and_match() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer allows restart with same checkpoint.
+     * Preconditions: Storage has checkpoint 100 and indexed height 120 from previous run. Bitcoin regtest at height 150.
+     * Input: checkpoint_height: Some(100), stored checkpoint 100.
+     * Steps:
+     *  Run indexer with checkpoint 100, sync to height 120.
+     *  Stop indexer.
+     *  Mine more blocks on regtest (to height 150).
+     *  Construct new indexer with same checkpoint 100.
+     *  Verify no errors.
+     * Expected Result: Indexer initializes successfully. Best height = 120. No checkpoint conflict. Ready to continue syncing.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine 125 blocks initially
+    bitcoin_client.mine_blocks_to_address(125, &wallet)?;
+
+    // Step 1: Run indexer with checkpoint 100, sync to height 120
+    {
+        let bitcoin_client_for_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let indexer = Indexer::new(
+            bitcoin_client_for_indexer,
+            store.clone(),
+            Some(IndexerSettings::new(Some(100))),
+        )?;
+        
+        // Verify starts at checkpoint 100
+        assert_eq!(indexer.get_best_height()?, Some(100));
+        
+        // Sync up to height 120
+        for _ in 0..20 {  // Changed from 21 to 20
+            indexer.tick()?;
+        }
+        
+        // Verify we're at height 120
+        assert_eq!(indexer.get_best_height()?, Some(120));
+    }
+    // Indexer dropped here, simulating a stop
+
+    // Step 2: Mine more blocks (to height 155)
+    bitcoin_client.mine_blocks_to_address(30, &wallet)?;
+
+    // Step 3: Construct new indexer with same checkpoint 100
+    let bitcoin_client_new = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer_new = Indexer::new(
+        bitcoin_client_new,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+    )?;
+
+    // Verify no errors and best height is 120 (resume point)
+    assert_eq!(indexer_new.get_best_height()?, Some(120));
+
+    // Verify checkpoint is still 100
+    assert_eq!(store.get_checkpoint_height()?, Some(100));
+
+    // Verify we can continue syncing
+    indexer_new.tick()?;
+    assert_eq!(indexer_new.get_best_height()?, Some(121));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
 fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
     /*
      * Objective: Ensure indexer rejects different checkpoint if one already exists.
@@ -598,9 +1094,9 @@ fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
 
     // Step 1: Run indexer with checkpoint 50, sync some blocks
     {
-        let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let bitcoin_client_for_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
         let indexer = Indexer::new(
-             bitcoin_client_clone,
+             bitcoin_client_for_indexer,
             store.clone(),
             Some(IndexerSettings::new(Some(50))),
         )?;
@@ -621,8 +1117,9 @@ fn test_different_checkpoint_height_fails() -> Result<(), anyhow::Error> {
     // Indexer is dropped here, simulating a stop
 
     // Step 2: Attempt to construct new indexer with different checkpoint 100 using same storage
+    let bitcoin_client_for_second_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
     let result = Indexer::new(
-        bitcoin_client,
+        bitcoin_client_for_second_indexer,
         store.clone(),
         Some(IndexerSettings::new(Some(100))),
     );
@@ -688,9 +1185,9 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
 
     // Step 1: Run indexer to sync to height 80
     {
-        let bitcoin_client_clone = BitcoinClient::new_from_config(&config.bitcoin)?;
+        let bitcoin_client_for_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
         let indexer = Indexer::new(
-            bitcoin_client_clone,
+            bitcoin_client_for_indexer,
             store.clone(),
             Some(IndexerSettings::new(Some(80))),
         )?;
@@ -712,8 +1209,9 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
     assert_eq!(store.get_block_hash_by_height(80)?, None);
 
     // Step 3: Attempt to construct indexer with corrupted storage
+    let bitcoin_client_for_corrupted_test = BitcoinClient::new_from_config(&config.bitcoin)?;
     let result = Indexer::new(
-        bitcoin_client,
+        bitcoin_client_for_corrupted_test,
         store.clone(),
         Some(IndexerSettings::new(Some(80))),
     );
