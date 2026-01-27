@@ -22,3 +22,7 @@ rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitv
 bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.5.1" }
 bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.5.1" }
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.5.1" }
+bitcoincore-rpc-json = "0.19.0"
+
+[dev-dependencies]
+predicates = "3.1"

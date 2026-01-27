@@ -6,8 +6,8 @@ use bitcoin_indexer::{
 use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
 mod utils;
 use crate::utils::clear_output;
-use mockall::predicate::eq;
 use std::str::FromStr;
+use predicates::prelude::predicate;
 use utils::get_indexer_store;
 
 #[test]
@@ -199,13 +199,13 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
 
     bitcoin_client
         .expect_get_block_by_height()
-        .with(eq(1000))
+        .with(predicate::eq(1000))
         .returning(move |_| Ok(Some(block_info.clone())));
 
     // Mock the RPC call for the middle transaction (tx4) to return fee=4 sat, vsize=1 vbyte
     bitcoin_client
         .expect_get_raw_transaction_verbosity_two()
-        .with(eq(middle_tx_id))
+        .with(predicate::eq(middle_tx_id))
         .returning(move |_| {
             Ok(json!({
                 "fee": 0.00000004, // 4 satoshis in BTC
@@ -269,7 +269,7 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
 
     bitcoin_client
         .expect_get_block_by_height()
-        .with(eq(1000))
+        .with(predicate::eq(1000))
         .returning(move |_| Ok(Some(block_info.clone())));
 
     let indexer = Indexer::new(
@@ -386,7 +386,7 @@ fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
 
     bitcoin_client
         .expect_get_block_by_height()
-        .with(eq(1000))
+        .with(predicate::eq(1000))
         .returning(move |_| Ok(Some(block_info.clone())));
 
     let indexer = Indexer::new(

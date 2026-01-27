@@ -449,9 +449,72 @@ fn estimate_fee_rate<B: BitcoinClientApi>(
 mod tests {
     use super::*;
     use bitcoin::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
-    use bitvmx_bitcoin_rpc::bitcoin_client::MockBitcoinClientApi;
+    use bitcoincore_rpc_json::GetRawTransactionResult;
+    use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::str::FromStr;
+
+    // Manual mock implementation of BitcoinClientApi
+    struct MockBitcoinClient {
+        tx_responses: HashMap<Txid, serde_json::Value>,
+    }
+
+    impl MockBitcoinClient {
+        fn new() -> Self {
+            Self {
+                tx_responses: HashMap::new(),
+            }
+        }
+
+        fn with_tx_response(mut self, tx_id: Txid, response: serde_json::Value) -> Self {
+            self.tx_responses.insert(tx_id, response);
+            self
+        }
+    }
+
+    impl BitcoinClientApi for MockBitcoinClient {
+        fn get_best_block(&self) -> Result<u32, BitcoinClientError> { Ok(100) }
+        fn get_block_by_height(
+            &self,
+            _height: &BlockHeight,
+        ) -> Result<Option<BlockInfo>, BitcoinClientError> { Ok(None) }
+        fn get_block_by_hash(
+            &self,
+            _hash: &BlockHash,
+        ) -> Result<bitcoin::Block, BitcoinClientError> { unimplemented!() }
+
+        fn get_raw_transaction_verbosity_two(
+            &self,
+            tx_id: &Txid,
+        ) -> Result<serde_json::Value, BitcoinClientError> {
+            Ok(self.tx_responses.get(tx_id).cloned().unwrap_or(serde_json::Value::Null))
+        }
+
+        fn get_blockchain_info(
+            &self,
+        ) -> Result<bitcoincore_rpc_json::GetBlockchainInfoResult, BitcoinClientError> {
+            unimplemented!()
+        }
+        fn mine_blocks_to_address(&self, _count: u64, _address: &bitcoin::Address) -> Result<(), BitcoinClientError> { unimplemented!() }
+        fn init_wallet(&self, _wallet_name: &str) -> Result<bitcoin::Address, BitcoinClientError> { unimplemented!() }
+        fn get_block_id_by_height(&self, _height: &BlockHeight) -> Result<BlockHash, BitcoinClientError> { unimplemented!() }
+        fn tx_exists(&self, _tx_id: &Txid) -> bool { unimplemented!() }
+        fn get_tx_out(
+            &self,
+            _tx_id: &Txid,
+            _index: u32,
+        ) -> Result<bitcoincore_rpc_json::GetTxOutResult, BitcoinClientError> { unimplemented!() }
+        fn fund_address(&self, _address: &bitcoin::Address, _amount: bitcoin::Amount) -> Result<(bitcoin::Transaction, u32), BitcoinClientError> { unimplemented!() }
+        fn send_transaction(&self, _tx: &Transaction) -> Result<Txid, BitcoinClientError> { unimplemented!() }
+        fn get_transaction(&self, _tx_id: &Txid) -> Result<std::option::Option<bitcoin::Transaction>, BitcoinClientError> { unimplemented!() }
+        fn get_raw_transaction_info(&self, _tx_id: &Txid) -> Result<GetRawTransactionResult, BitcoinClientError> { unimplemented!() }
+        fn mine_blocks(&self, _count: u64) -> Result<(), BitcoinClientError> { unimplemented!() }
+        fn get_new_address(&self, _public_key: bitcoin::PublicKey, _network: bitcoin::Network) -> Result<bitcoin::Address, BitcoinClientError> { unimplemented!() }
+        fn create_wallet_only(&self, _wallet_name: &str) -> Result<(), BitcoinClientError> { unimplemented!() }
+        fn invalidate_block(&self, _hash: &BlockHash) -> Result<(), BitcoinClientError> { unimplemented!() }
+        fn estimate_smart_fee(&self) -> Result<u64, BitcoinClientError> { unimplemented!() }
+    }
 
     fn create_mock_transaction(is_coinbase: bool) -> Transaction {
         let mut tx = Transaction {
@@ -526,20 +589,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate() {
-        let mut mock_client = MockBitcoinClientApi::new();
-        let block = create_block_with_transactions(10, false); // 10 transactions, no coinbase in middle
-
-        let middle_tx = &block.txs[5]; // Middle transaction
+        let block = create_block_with_transactions(10, false);
+        let middle_tx = &block.txs[5];
         let tx_id = middle_tx.compute_txid();
 
-        // Mock the response for get_raw_transaction_verbosity_two
-        let raw_tx_response = create_raw_tx_response(Some(0.0001), Some(250)); // 0.0001 BTC fee, 250 vB
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let raw_tx_response = create_raw_tx_response(Some(0.0001), Some(250));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
 
@@ -549,8 +604,8 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_with_few_transactions() {
-        let mock_client = MockBitcoinClientApi::new();
-        let block = create_block_with_transactions(3, false); // Only 3 transactions (less than MIN_BLOCK_TX)
+        let mock_client = MockBitcoinClient::new();
+        let block = create_block_with_transactions(3, false);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE
@@ -558,8 +613,8 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_with_coinbase_in_middle() {
-        let mock_client = MockBitcoinClientApi::new();
-        let block = create_block_with_transactions(10, true); // 10 transactions with coinbase at middle
+        let mock_client = MockBitcoinClient::new();
+        let block = create_block_with_transactions(10, true);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE because middle tx is coinbase
@@ -567,8 +622,8 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_edge_case_min_transactions() {
-        let mock_client = MockBitcoinClientApi::new();
-        let block = create_block_with_transactions(5, false); // Exactly MIN_BLOCK_TX transactions
+        let mock_client = MockBitcoinClient::new();
+        let block = create_block_with_transactions(5, false);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE (<=5 transactions)
@@ -576,19 +631,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_just_above_min_transactions() {
-        let mut mock_client = MockBitcoinClientApi::new();
-        let block = create_block_with_transactions(6, false); // Just above MIN_BLOCK_TX
-
-        let middle_tx = &block.txs[3]; // Middle transaction (6/2 = 3)
+        let block = create_block_with_transactions(6, false);
+        let middle_tx = &block.txs[3];
         let tx_id = middle_tx.compute_txid();
 
-        let raw_tx_response = create_raw_tx_response(Some(0.00005), Some(200)); // 5,000 sats / 200 vB = 25 sat/vB
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let raw_tx_response = create_raw_tx_response(Some(0.00005), Some(200));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 25);
@@ -596,20 +644,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_low_fee_rate() {
-        let mut mock_client = MockBitcoinClientApi::new();
         let block = create_block_with_transactions(10, false);
-
         let middle_tx = &block.txs[5];
         let tx_id = middle_tx.compute_txid();
 
-        // Very low fee that results in less than 1 sat/vB
-        let raw_tx_response = create_raw_tx_response(Some(0.000001), Some(1000)); // 100 sats / 1000 vB = 0.1 sat/vB
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let raw_tx_response = create_raw_tx_response(Some(0.000001), Some(1000));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
 
@@ -619,20 +659,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_missing_fee() {
-        let mut mock_client = MockBitcoinClientApi::new();
         let block = create_block_with_transactions(10, false);
-
         let middle_tx = &block.txs[5];
         let tx_id = middle_tx.compute_txid();
 
-        // Response without fee field
         let raw_tx_response = create_raw_tx_response(None, Some(250));
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE
@@ -640,20 +672,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_missing_vsize() {
-        let mut mock_client = MockBitcoinClientApi::new();
         let block = create_block_with_transactions(10, false);
-
         let middle_tx = &block.txs[5];
         let tx_id = middle_tx.compute_txid();
 
-        // Response without vsize field
         let raw_tx_response = create_raw_tx_response(Some(0.0001), None);
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE
@@ -661,20 +685,12 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_invalid_fee_value() {
-        let mut mock_client = MockBitcoinClientApi::new();
         let block = create_block_with_transactions(10, false);
-
         let middle_tx = &block.txs[5];
         let tx_id = middle_tx.compute_txid();
 
-        // Negative fee value (invalid)
         let raw_tx_response = create_raw_tx_response(Some(-0.0001), Some(250));
-
-        mock_client
-            .expect_get_raw_transaction_verbosity_two()
-            .with(mockall::predicate::eq(tx_id))
-            .times(1)
-            .returning(move |_| Ok(raw_tx_response.clone()));
+        let mock_client = MockBitcoinClient::new().with_tx_response(tx_id, raw_tx_response);
 
         let result = estimate_fee_rate(&mock_client, &block).unwrap();
         assert_eq!(result, 0); // Should return ERROR_FEE_RATE for invalid fee
