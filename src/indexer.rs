@@ -449,7 +449,7 @@ fn estimate_fee_rate<B: BitcoinClientApi>(
 mod tests {
     use super::*;
     use bitcoin::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
-    use bitcoincore_rpc_json::GetRawTransactionResult;
+    use bitcoincore_rpc_json::{GetMempoolEntryResult, GetRawTransactionResult};
     use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
     use serde_json::json;
     use std::collections::HashMap;
@@ -514,6 +514,10 @@ mod tests {
         fn create_wallet_only(&self, _wallet_name: &str) -> Result<(), BitcoinClientError> { unimplemented!() }
         fn invalidate_block(&self, _hash: &BlockHash) -> Result<(), BitcoinClientError> { unimplemented!() }
         fn estimate_smart_fee(&self) -> Result<u64, BitcoinClientError> { unimplemented!() }
+        
+        fn get_mempool_entry(&self,txid: &Txid) -> Result<GetMempoolEntryResult,BitcoinClientError> {
+            todo!()
+        }
     }
 
     fn create_mock_transaction(is_coinbase: bool) -> Transaction {
