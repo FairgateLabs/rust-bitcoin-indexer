@@ -96,23 +96,13 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
 }
 
 pub fn clear_output() {
-    // On Windows, add single retry for directory removal due to file handles
-    #[cfg(target_os = "windows")]
-    {
-        for attempt in 0..2 {
-            match std::fs::remove_dir_all("test_output") {
-                Ok(_) => return,
-                Err(_) if attempt == 0 => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(_) => return, // Ignore final failure
-            }
+    // Try once, retry once on Windows-like systems with brief delay
+    match std::fs::remove_dir_all("test_output") {
+        Ok(_) => {},
+        Err(_) => {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = std::fs::remove_dir_all("test_output");
         }
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = std::fs::remove_dir_all("test_output");
     }
 }
 
