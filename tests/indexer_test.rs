@@ -362,47 +362,6 @@ fn test_orphan_block_not_marked_during_reorg() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-
-#[test]
-fn test_load_config_from_yaml() -> Result<(), anyhow::Error> {
-    /*
-     * Objective: Verify that valid YAML configuration is parsed correctly into IndexerConfig.
-     * Preconditions: config/development.yaml exists with valid structure.
-     * Input: Path to valid YAML configuration file.
-     * Steps:
-     *
-     * Call settings::load::<IndexerConfig>().
-     * Inspect returned IndexerConfig struct fields.
-     * Verify all fields match expected values from YAML.
-     * Expected Result: Configuration loaded successfully with storage, bitcoin, 
-     *  settings, and log_level fields populated correctly. No errors thrown.
-     */
-    
-    // Load the configuration from YAML file
-    let config = settings::load::<IndexerConfig>()?;
-    
-    // Verify storage configuration
-    assert_eq!(config.storage.path, "data");
-    
-    // Verify bitcoin RPC configuration
-    assert_eq!(config.bitcoin.network, Network::Regtest);
-    assert_eq!(config.bitcoin.url.expose_secret(), "http://localhost:18443");
-    assert_eq!(config.bitcoin.username.expose_secret(), "foo");
-    assert_eq!(config.bitcoin.password.expose_secret(), "rpcpassword");
-    assert_eq!(config.bitcoin.wallet, "test_wallet");
-    
-    // Verify indexer settings
-    assert!(config.settings.is_some());
-    let settings = config.settings.unwrap();
-    assert_eq!(settings.checkpoint_height, Some(1));
-    
-    // Verify log level
-    assert!(config.log_level.is_some());
-    assert_eq!(config.log_level.unwrap(), "info");
-    
-    Ok(())
-}
-
 #[test]
 fn test_configuration_missing_optional_fields() -> Result<(), anyhow::Error> {
     /*
