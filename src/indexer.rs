@@ -6,7 +6,6 @@ use crate::{
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
-use mockall::automock;
 use std::rc::Rc;
 use tracing::{error, info, warn};
 pub struct Indexer<B>
@@ -17,7 +16,6 @@ where
     pub store: Rc<IndexerStore>,
 }
 
-#[automock]
 pub trait IndexerApi {
     /// Checks if the indexer has indexed the entire blockchain and is at the latest block.
     /// Returns `Ok(true)` if ready, `Ok(false)` if not, or an `IndexerError` if an error occurs.
@@ -179,7 +177,6 @@ where
     }
 }
 
-#[automock]
 impl<B> IndexerApi for Indexer<B>
 where
     B: BitcoinClientApi,
