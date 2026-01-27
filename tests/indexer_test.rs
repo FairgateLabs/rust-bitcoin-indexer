@@ -1,7 +1,7 @@
 use bitcoin_indexer::{
     config::{IndexerConfig, IndexerSettings},
     errors::IndexerError,
-    indexer::Indexer,
+    indexer::{Indexer, IndexerApi},
     store::{IndexerStore, StoreClient},
     types::FullBlock,
 };

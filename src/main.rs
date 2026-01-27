@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bitcoin_indexer::{
     config::IndexerConfig,
-    indexer::Indexer,
+    indexer::{Indexer, IndexerApi},
     store::IndexerStore,
 };
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};

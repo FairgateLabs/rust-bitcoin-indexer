@@ -6,6 +6,7 @@ use crate::{
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
+use mockall::automock;
 use std::rc::Rc;
 use tracing::{error, info, warn};
 pub struct Indexer<B>
@@ -14,6 +15,44 @@ where
 {
     pub bitcoin_client: B,
     pub store: Rc<IndexerStore>,
+}
+
+#[automock]
+pub trait IndexerApi {
+    /// Checks if the indexer has indexed the entire blockchain and is at the latest block.
+    /// Returns `Ok(true)` if ready, `Ok(false)` if not, or an `IndexerError` if an error occurs.
+    fn is_ready(&self) -> Result<bool, IndexerError>;
+
+    /// Processes the next block in the blockchain.
+    /// Returns `Ok(())` if successful, or an `IndexerError` if an error occurs during processing.
+    fn tick(&self) -> Result<(), IndexerError>;
+
+    /// Retrieves the best (most recent) block that has been indexed.
+    /// Returns `Ok(Some(FullBlock))` if a block is found, `Ok(None)` if no block was indexed, or an `IndexerError` if an error occurs.
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
+
+    /// Retrieves the height of the best (most recent) block that has been indexed.
+    /// Returns `Ok(Some(BlockHeight))` if a height is found, `Ok(None)` if no block is indexed, or an `IndexerError` if an error occurs.
+    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError>;
+
+    /// Retrieves the current best block height from the Bitcoin blockchain.
+    /// Returns `Ok(BlockHeight)` with the current blockchain height, or an `IndexerError` if an error occurs.
+    fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError>;
+
+    /// Retrieves a block by its height.
+    /// Returns `Ok(Some(FullBlock))` if the block is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError>;
+
+    // Retrieves a block by its hash.
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError>;
+
+    /// Retrieves transaction information for a given transaction ID.
+    /// Returns `Ok(Some(TransactionInfo))` if the transaction is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError>;
+
+    /// Retrieves the estimated fee rate from the most recently indexed block.
+    /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
+    fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError>;
 }
 
 impl<B> Indexer<B>
@@ -138,8 +177,14 @@ where
             store,
         })
     }
+}
 
-    pub fn is_ready(&self) -> Result<bool, IndexerError> {
+#[automock]
+impl<B> IndexerApi for Indexer<B>
+where
+    B: BitcoinClientApi,
+{
+    fn is_ready(&self) -> Result<bool, IndexerError> {
         let current_height = self.get_best_height()?;
         let blockchain_height = self.get_blockchain_best_height()?;
 
@@ -149,24 +194,25 @@ where
 
         Ok(current_height.unwrap() >= blockchain_height)
     }
-    pub fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
+
+    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
         let best_height = self.store.get_best_height()?;
         Ok(best_height)
     }
 
-    pub fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError> {
+    fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError> {
         Ok(self.bitcoin_client.get_best_block()? as BlockHeight)
     }
 
-    pub fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
+    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
         Ok(self.store.get_best_block()?)
     }
 
-    pub fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
+    fn get_tx(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerError> {
         Ok(self.store.get_tx_info(tx_id)?)
     }
 
-    pub fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
+    fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
         let best_block = self.store.get_best_block()?;
         let best_blockchain_height = self.bitcoin_client.get_best_block()?;
 
@@ -187,7 +233,7 @@ where
         }
     }
 
-    pub fn tick(&self) -> Result<(), IndexerError> {
+    fn tick(&self) -> Result<(), IndexerError> {
         // Retrieve the last block height that has been successfully synced by the indexer.
         // This should have data.
         let best_indexer_height = self.store.get_best_height()?.unwrap_or(0);
@@ -277,15 +323,12 @@ where
         Ok(())
     }
 
-    pub fn get_block_by_height(
-        &self,
-        height: BlockHeight,
-    ) -> Result<Option<FullBlock>, IndexerError> {
+    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_block_by_height(height)?;
         Ok(block)
     }
 
-    pub fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError> {
+    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_block_by_hash(hash)?;
         Ok(block)
     }

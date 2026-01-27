@@ -1,7 +1,7 @@
 use bitcoin::BlockHash;
 use bitcoin_indexer::{
     config::IndexerSettings,
-    indexer::Indexer,
+    indexer::{Indexer, IndexerApi},
 };
 use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
 mod utils;
@@ -16,7 +16,7 @@ fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::E
         absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn,
         TxOut,
     };
-    use bitcoin_indexer::indexer::Indexer;
+    use bitcoin_indexer::indexer::{Indexer, IndexerApi};
     use serde_json::json;
 
     let mut bitcoin_client = MockBitcoinClient::new();
