@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitcoin::Network;
 use bitcoin_indexer::{
     config::IndexerConfig,
-    indexer::{Indexer, IndexerApi},
+    indexer::Indexer,
 };
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
