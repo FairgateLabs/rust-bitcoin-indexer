@@ -217,7 +217,7 @@ where
 
         if let Some(mut tx_info) = tx_status {
             // Update status based on confirmations and threshold
-            if tx_info.status == TransactionBlockchainStatus::Orphan {
+            if tx_info.is_orphan() {
                 // If transaction is orphan, check if it's in mempool
                 let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
 
@@ -227,13 +227,7 @@ where
                     tx_info.confirmations = 0;
                     tx_info.block_info = None;
                 }
-            } else if tx_info.confirmations >= self.settings.confirmation_threshold {
-                tx_info.status = TransactionBlockchainStatus::Finalized;
-            } else {
-                tx_info.status = TransactionBlockchainStatus::Confirmed;
             }
-
-            tx_info.confirmation_threshold = self.settings.confirmation_threshold;
 
             Ok(tx_info)
         } else {
@@ -244,6 +238,7 @@ where
             } else {
                 TransactionBlockchainStatus::NotFound
             };
+
             Ok(TransactionInfo {
                 tx: None,
                 block_info: None,
@@ -304,6 +299,7 @@ where
         // --- REORG DETECTION ---
         // If the block exists but the hashes differ, a reorg has occurred and we must roll back.
         if new_blockchain_block.height > 0 && new_blockchain_block.hash != indexer_block.hash {
+            println!("new_blockchain_block:");
             warn!(
                 "REORG: Block at height {} is different from the blockchain",
                 current_height

@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
-use crate::settings::DEFAULT_CONFIRMATION_THRESHOLD;
 use crate::types::{FullBlock, TransactionBlockchainStatus, TransactionInfo};
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
@@ -13,6 +12,7 @@ use storage_backend::storage::Storage;
 use tracing::warn;
 pub struct IndexerStore {
     store: Rc<Storage>,
+    confirmation_threshold: u32,
 }
 
 enum StoreKey {
@@ -25,8 +25,11 @@ enum StoreKey {
 }
 
 impl IndexerStore {
-    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerStoreError> {
-        Ok(Self { store })
+    pub fn new(store: Rc<Storage>, confirmation_threshold: u32) -> Result<Self, IndexerStoreError> {
+        Ok(Self {
+            store,
+            confirmation_threshold,
+        })
     }
 
     fn get_key(&self, key: StoreKey) -> String {
@@ -198,7 +201,7 @@ impl StoreClient for IndexerStore {
                 block_info: Some(block_info),
                 confirmations,
                 status,
-                confirmation_threshold: DEFAULT_CONFIRMATION_THRESHOLD, // Will be updated in indexer with actual threshold
+                confirmation_threshold: self.confirmation_threshold, // Will be updated in indexer with actual threshold
             }))
         } else {
             Ok(None)
@@ -242,6 +245,8 @@ impl StoreClient for IndexerStore {
         while current_height <= best_height {
             if let Some(mut block) = self.get_block_by_height(current_height)? {
                 block.orphan = true;
+
+                println!("marking block as orphan:");
 
                 let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
                 self.store.set(block_key, block, None)?;

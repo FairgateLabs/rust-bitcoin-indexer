@@ -21,7 +21,7 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
     );
     let config = StorageConfig::new(path, None);
     let store = Rc::new(Storage::new(&config).unwrap());
-    let indexer_store = IndexerStore::new(store).unwrap();
+    let indexer_store = IndexerStore::new(store, 6).unwrap();
 
     Rc::new(indexer_store)
 }

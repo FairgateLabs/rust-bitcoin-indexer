@@ -41,7 +41,7 @@ fn main() -> Result<(), anyhow::Error> {
     info!("Connected to chain {}", network);
     info!("Chain best block at {}H", blockchain_height);
     let storage = Rc::new(Storage::new(&config.storage)?);
-    let indexer_store = Rc::new(IndexerStore::new(storage)?);
+    let indexer_store = Rc::new(IndexerStore::new(storage, 6)?);
     let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), config.settings)?;
 
     for _ in 0..150 {
