@@ -2,7 +2,7 @@ use crate::{
     config::IndexerSettings,
     errors::IndexerError,
     store::{IndexerStore, StoreClient},
-    types::{FullBlock, TransactionBlockchainStatus, TransactionInfo},
+    types::{FullBlock, TransactionInfo, TransactionStatus},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
@@ -223,7 +223,7 @@ where
 
                 if tx_mempool_status.is_err() {
                     // Transaction is not in mempool, mark as not found
-                    tx_info.status = TransactionBlockchainStatus::NotFound;
+                    tx_info.status = TransactionStatus::NotFound;
                     tx_info.confirmations = 0;
                     tx_info.block_info = None;
                 }
@@ -234,9 +234,9 @@ where
             // Transaction not found in storage, check mempool
             let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
             let status = if tx_mempool_status.is_ok() {
-                TransactionBlockchainStatus::InMempool
+                TransactionStatus::InMempool
             } else {
-                TransactionBlockchainStatus::NotFound
+                TransactionStatus::NotFound
             };
 
             Ok(TransactionInfo {

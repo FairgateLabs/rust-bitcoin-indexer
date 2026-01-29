@@ -17,7 +17,7 @@ pub struct TransactionInfo {
     pub tx: Option<Transaction>,
     pub block_info: Option<FullBlock>,
     pub confirmations: u32,
-    pub status: TransactionBlockchainStatus,
+    pub status: TransactionStatus,
     pub confirmation_threshold: u32,
 }
 
@@ -25,7 +25,7 @@ impl TransactionInfo {
     pub fn new(
         tx: Transaction,
         block_info: FullBlock,
-        status: TransactionBlockchainStatus,
+        status: TransactionStatus,
         confirmations: u32,
         confirmation_threshold: u32,
     ) -> Self {
@@ -43,14 +43,14 @@ impl TransactionInfo {
         // - The status is Finalized
         // - The number of confirmations meets or exceeds the confirmation threshold
         self.confirmations >= self.confirmation_threshold
-            && self.status == TransactionBlockchainStatus::Finalized
+            && self.status == TransactionStatus::Finalized
     }
 
     pub fn is_confirmed(&self) -> bool {
         // A transaction is considered confirmed if it has been included in a block
         // and has at least one confirmation (confirmations > 0), regardless of the exact number of confirmations.
         // This means the transaction is in the main chain and not orphaned.
-        self.confirmations > 0 && self.status == TransactionBlockchainStatus::Confirmed
+        self.confirmations > 0 && self.status == TransactionStatus::Confirmed
     }
 
     pub fn is_orphan(&self) -> bool {
@@ -60,17 +60,23 @@ impl TransactionInfo {
         //  is_orphan = true
         //  status = Orphan
         if let Some(block_info) = &self.block_info {
-            self.confirmations == 0
-                && block_info.orphan
-                && self.status == TransactionBlockchainStatus::Orphan
+            self.confirmations == 0 && block_info.orphan && self.status == TransactionStatus::Orphan
         } else {
             false
         }
     }
+
+    pub fn is_in_mempool(&self) -> bool {
+        self.status == TransactionStatus::InMempool
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        self.status == TransactionStatus::NotFound
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-pub enum TransactionBlockchainStatus {
+pub enum TransactionStatus {
     // Represents a transaction that has been successfully confirmed by the network but a reorganization moved it out of the chain.
     Orphan,
     // Represents a transaction that has been successfully confirmed by the network

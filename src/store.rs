@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
-use crate::types::{FullBlock, TransactionBlockchainStatus, TransactionInfo};
+use crate::types::{FullBlock, TransactionInfo, TransactionStatus};
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
@@ -191,9 +191,9 @@ impl StoreClient for IndexerStore {
             // this indicates a reorg or block invalidation where the blockchain has reverted.
             let status = if block_info.orphan || block_info.height > best_block_height {
                 confirmations = 0;
-                TransactionBlockchainStatus::Orphan
+                TransactionStatus::Orphan
             } else {
-                TransactionBlockchainStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
+                TransactionStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
             };
 
             Ok(Some(TransactionInfo {
