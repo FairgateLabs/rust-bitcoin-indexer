@@ -299,7 +299,6 @@ where
         // --- REORG DETECTION ---
         // If the block exists but the hashes differ, a reorg has occurred and we must roll back.
         if new_blockchain_block.height > 0 && new_blockchain_block.hash != indexer_block.hash {
-            println!("new_blockchain_block:");
             warn!(
                 "REORG: Block at height {} is different from the blockchain",
                 current_height

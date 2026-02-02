@@ -246,8 +246,6 @@ impl StoreClient for IndexerStore {
             if let Some(mut block) = self.get_block_by_height(current_height)? {
                 block.orphan = true;
 
-                println!("marking block as orphan:");
-
                 let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
                 self.store.set(block_key, block, None)?;
             }
