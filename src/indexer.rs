@@ -448,94 +448,14 @@ fn estimate_fee_rate<B: BitcoinClientApi>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitcoin::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness, Amount};
     use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
     use bitvmx_settings::settings;
     use crate::config::IndexerConfig;
     use bitcoind::bitcoind::Bitcoind;
     use bitcoind::config::BitcoindConfig;
-    use std::str::FromStr;
-
-    fn create_transaction_with_fee(fee_sats: u64, vsize: u64) -> Transaction {
-        // Create a simple transaction for testing
-        Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![TxIn {
-                previous_output: OutPoint::null(),
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
-                witness: Witness::new(),
-            }],
-            output: vec![TxOut {
-                value: Amount::from_sat(fee_sats * vsize),
-                script_pubkey: ScriptBuf::new(),
-            }],
-        }
-    }
-
-    fn create_mock_transaction(is_coinbase: bool) -> Transaction {
-        let mut tx = Transaction {
-            version: bitcoin::transaction::Version::ONE,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![],
-            output: vec![TxOut {
-                value: Amount::from_sat(50_000_000),
-                script_pubkey: ScriptBuf::new(),
-            }],
-        };
-
-        if is_coinbase {
-            tx.input.push(TxIn {
-                previous_output: OutPoint::null(),
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
-                witness: Witness::new(),
-            });
-        } else {
-            tx.input.push(TxIn {
-                previous_output: OutPoint::new(
-                    Txid::from_str(
-                        "0000000000000000000000000000000000000000000000000000000000000001",
-                    )
-                    .unwrap(),
-                    0,
-                ),
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
-                witness: Witness::new(),
-            });
-        }
-
-        tx
-    }
-
-    fn create_block_with_transactions(tx_count: usize, coinbase_at_middle: bool) -> BlockInfo {
-        let mut txs = Vec::new();
-
-        // Always add coinbase as first transaction
-        txs.push(create_mock_transaction(true));
-
-        // Add regular transactions
-        for i in 1..tx_count {
-            let is_coinbase = coinbase_at_middle && i == tx_count / 2;
-            txs.push(create_mock_transaction(is_coinbase));
-        }
-
-        BlockInfo {
-            hash: "0000000000000000000000000000000000000000000000000000000000000001"
-                .parse()
-                .unwrap(),
-            height: 100,
-            prev_hash: "0000000000000000000000000000000000000000000000000000000000000000"
-                .parse()
-                .unwrap(),
-            txs,
-        }
-    }
 
     // Helper to setup bitcoind and BitcoinClient for tests
-    fn setup_bitcoind() -> Result<(BitcoinClient, Bitcoind, String), Box<dyn std::error::Error>> {
+    fn setup_bitcoind() -> Result<(BitcoinClient, Bitcoind, bitcoin::Address), Box<dyn std::error::Error>> {
         let config = settings::load::<IndexerConfig>()?;
         let bitcoind_config = BitcoindConfig::default();
         let bitcoind = Bitcoind::new(
@@ -548,135 +468,65 @@ mod tests {
         let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
         let wallet = bitcoin_client.init_wallet("test_wallet")?;
         
-        Ok((bitcoin_client, bitcoind, wallet.to_string()))
+        Ok((bitcoin_client, bitcoind, wallet))
     }
 
     #[test]
     fn test_estimate_fee_rate() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, false);
+        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
         
-        // Verify that we have enough transactions
-        assert_eq!(block.txs.len(), 10);
+        // Mine blocks to have data
+        bitcoin_client.mine_blocks_to_address(10, &wallet)?;
         
-        // Verify the middle transaction is not a coinbase
-        let middle_tx = &block.txs[5];
-        let middle_txid = middle_tx.compute_txid();
+        let best_block_height = bitcoin_client.get_best_block()?;
+        let block = bitcoin_client.get_block_by_height(&best_block_height)?;
         
-        // Create a real BitcoinClient
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
+        if let Some(block) = block {
+            let fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
+            // fee_rate is u64, so it's always non-negative - just verify it succeeds
+            let _ = fee_rate;
+        }
         
-        // For this test, we verify the block structure is correct
-        // The actual RPC call would happen during indexing with real data
-        let zero_txid = Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
-        assert_ne!(middle_txid, zero_txid);
-        
-        bitcoind.stop()?;
         Ok(())
     }
 
     #[test]
     fn test_estimate_fee_rate_with_few_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(3, false);
+        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
         
-        // Block with only 3 transactions (< MIN_BLOCK_TX of 5)
-        // Should result in fee rate of 0 (ERROR_FEE_RATE)
-        assert_eq!(block.txs.len(), 3);
+        // Mine a single block with only coinbase
+        bitcoin_client.mine_blocks_to_address(1, &wallet)?;
         
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
+        let best_block_height = bitcoin_client.get_best_block()?;
+        let block = bitcoin_client.get_block_by_height(&best_block_height)?
+            .ok_or("Block not found")?;
+        
+        // Should have <= 5 transactions
+        assert!(block.txs.len() <= 5);
+        
+        let fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
+        assert_eq!(fee_rate, 0, "Fee rate should be 0 for blocks with <= 5 transactions");
+        
         Ok(())
     }
 
     #[test]
-    fn test_estimate_fee_rate_with_coinbase_in_middle() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, true);
+    fn test_estimate_fee_rate_returns_valid_result() -> Result<(), Box<dyn std::error::Error>> {
+        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
         
-        // Verify coinbase is at middle position
-        let middle_tx = &block.txs[5];
-        // Coinbase has null input
-        assert!(middle_tx.input[0].previous_output.is_null());
+        bitcoin_client.mine_blocks_to_address(5, &wallet)?;
         
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_edge_case_min_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(5, false);
+        let best_block_height = bitcoin_client.get_best_block()?;
+        let block = bitcoin_client.get_block_by_height(&best_block_height)?
+            .ok_or("Block not found")?;
         
-        // Block with exactly MIN_BLOCK_TX (5 transactions)
-        // At the boundary, should return 0
-        assert_eq!(block.txs.len(), 5);
+        let result = estimate_fee_rate(&bitcoin_client, &block);
+        assert!(result.is_ok(), "estimate_fee_rate should return Ok");
         
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_just_above_min_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(6, false);
+        let fee_rate = result?;
+        // fee_rate is u64, so it's always non-negative
+        let _ = fee_rate;
         
-        // Block with 6 transactions (just above MIN_BLOCK_TX)
-        // Should calculate proper fee rate
-        assert_eq!(block.txs.len(), 6);
-        
-        let middle_tx = &block.txs[3];
-        let middle_txid = middle_tx.compute_txid();
-        let zero_txid = Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
-        assert_ne!(middle_txid, zero_txid);
-        
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_low_fee_rate() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, false);
-        
-        // Block with 10 transactions (sufficient for fee estimation)
-        assert_eq!(block.txs.len(), 10);
-        
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_missing_fee() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, false);
-        
-        // Verify block has sufficient transactions
-        assert!(block.txs.len() > 5);
-        
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_missing_vsize() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, false);
-        
-        // Verify block has sufficient transactions
-        assert!(block.txs.len() > 5);
-        
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_invalid_fee_value() -> Result<(), Box<dyn std::error::Error>> {
-        let block = create_block_with_transactions(10, false);
-        
-        // Verify block structure is correct
-        assert_eq!(block.txs.len(), 10);
-        
-        let (_bitcoin_client, bitcoind, _wallet) = setup_bitcoind()?;
-        bitcoind.stop()?;
         Ok(())
     }
 }
