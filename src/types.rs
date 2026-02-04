@@ -1,4 +1,4 @@
-use bitcoin::{BlockHash, Transaction};
+use bitcoin::{BlockHash, Transaction, Txid};
 use bitvmx_bitcoin_rpc::types::BlockHeight;
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +72,10 @@ impl TransactionInfo {
 
     pub fn is_not_found(&self) -> bool {
         self.status == TransactionStatus::NotFound
+    }
+
+    pub fn tx_id(&self) -> Txid {
+        self.tx.as_ref().unwrap().compute_txid()
     }
 }
 

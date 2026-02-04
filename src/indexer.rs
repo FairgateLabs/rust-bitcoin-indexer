@@ -327,11 +327,19 @@ where
             return Ok(());
         }
 
-        if best_indexer_height >= best_blockchain_height {
+        if best_indexer_height > best_blockchain_height {
             // This branch handles the scenario where the indexer has advanced further than the current blockchain tip.
             // This situation can occur if blocks have been invalidated or a reorg has caused the blockchain to roll back.
-            // To resolve this, update the indexer's synced and best heights to match the blockchain's current best height.
-            warn!("Indexer is ahead of the blockchain. Updating synced and best heights to match the blockchain's current best height.");
+            // Mark all blocks above the blockchain's best height as orphan before updating the height.
+            warn!("Indexer is ahead of the blockchain. Marking blocks as orphan and updating synced and best heights to match the blockchain's current best height.");
+
+            // Mark all blocks from best_blockchain_height + 1 to best_indexer_height as orphan
+            let start_orphan_height = best_blockchain_height.saturating_add(1);
+            if start_orphan_height <= best_indexer_height {
+                self.store
+                    .mark_following_blocks_as_orphan(start_orphan_height)?;
+            }
+
             self.store.save_best_height(best_blockchain_height)?;
             return Ok(());
         }
