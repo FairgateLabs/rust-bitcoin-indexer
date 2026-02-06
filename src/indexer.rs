@@ -466,6 +466,9 @@ mod tests {
         );
         bitcoind.start()?;
         
+        // Wait for bitcoind to be ready
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        
         let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
         let wallet = bitcoin_client.init_wallet("test_wallet")?;
         
@@ -484,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_with_real_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
+        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
         
         // Mine 101 blocks to have mature coins (coinbase needs 100 confirmations)
         bitcoin_client.mine_blocks_to_address(101, &wallet)?;
@@ -512,6 +515,7 @@ mod tests {
         assert!(block.txs.len() > 0, "Block should have transactions from real blockchain");
         assert!(block.txs[0].is_coinbase(), "First transaction should be coinbase");
         
+        bitcoind.stop()?;
         Ok(())
     }
 
@@ -521,7 +525,7 @@ mod tests {
         use storage_backend::{storage::Storage, storage_config::StorageConfig};
         use std::rc::Rc;
         
-        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
+        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
         
         // Mine blocks with mature coins
         bitcoin_client.mine_blocks_to_address(105, &wallet)?;
@@ -552,7 +556,8 @@ mod tests {
         assert!(block.estimated_fee_rate == 0, 
             "Fee rate should be 0 for blocks with insufficient transactions (computed by indexer)");
         
-        // Clean up test database
+        // Clean up
+        bitcoind.stop()?;
         let _ = std::fs::remove_dir_all(&db_path);
         
         Ok(())
@@ -560,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_estimate_fee_rate_with_few_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
+        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
         
         // Mine a single block with only coinbase
         bitcoin_client.mine_blocks_to_address(1, &wallet)?;
@@ -577,12 +582,13 @@ mod tests {
         let fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
         assert_eq!(fee_rate, 0, "Fee rate should be 0 for blocks with <= 5 transactions");
         
+        bitcoind.stop()?;
         Ok(())
     }
 
     #[test]
     fn test_estimate_fee_rate_returns_valid_result() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, _bitcoind, wallet) = setup_bitcoind()?;
+        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
         
         // Mine blocks to get real blockchain data
         bitcoin_client.mine_blocks_to_address(5, &wallet)?;
@@ -603,6 +609,7 @@ mod tests {
         // For blocks with only coinbase, fee_rate will be 0
         assert_eq!(fee_rate, 0, "Fee rate is 0 because block has insufficient transactions");
         
+        bitcoind.stop()?;
         Ok(())
     }
 }
