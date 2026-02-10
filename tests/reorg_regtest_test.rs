@@ -12,7 +12,6 @@ mod utils;
 use crate::utils::{clear_output, get_indexer_store, get_random_pubkey};
 
 #[test]
-#[ignore = "This test is ignored because it uses a real Bitcoin node, which is not available in CI"]
 fn reorganization_test() -> Result<(), anyhow::Error> {
     clear_output();
 
@@ -27,11 +26,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
 
     let bitcoind_config = BitcoindConfig::default();
 
-    let bitcoind = Bitcoind::new(
-        bitcoind_config,
-        config.bitcoin.clone(),
-        None
-    );
+    let bitcoind = Bitcoind::new(bitcoind_config, config.bitcoin.clone(), None);
 
     bitcoind.start()?;
 
@@ -118,6 +113,82 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     info!("Checking that the indexer is at height 140 and the blockchain is at height 140");
     assert_eq!(indexer.get_best_height()?, Some(140));
     assert_eq!(bitcoin_client.get_best_block()?, 140);
+
+    clear_output();
+
+    Ok(())
+}
+
+#[test]
+fn reorg_marks_last_three_blocks_as_orphan() -> Result<(), anyhow::Error> {
+    clear_output();
+
+    let config = settings::load::<IndexerConfig>()?;
+
+    let log_level = match config.log_level {
+        Some(level) => level.parse().unwrap_or(tracing::Level::ERROR),
+        None => tracing::Level::INFO,
+    };
+
+    tracing_subscriber::fmt().with_max_level(log_level).init();
+
+    let bitcoind_config = BitcoindConfig::default();
+
+    let bitcoind = Bitcoind::new(bitcoind_config, config.bitcoin.clone(), None);
+
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("reorg_orphans_wallet")?;
+    let indexer_store = get_indexer_store();
+    let indexer = Indexer::new(bitcoin_client.clone(), indexer_store.clone(), None)?;
+
+    info!("Mining 100 blocks to wallet");
+    bitcoin_client.mine_blocks_to_address(100, &wallet)?;
+
+    info!("Indexing 100 blocks");
+    for _ in 0..100 {
+        indexer.tick()?;
+    }
+
+    info!("Checking that the indexer and blockchain are at height 100");
+    assert_eq!(indexer.get_best_height()?, Some(100));
+    assert_eq!(bitcoin_client.get_best_block()?, 100);
+
+    // Capture the hashes of the last 3 blocks before invalidation.
+    let block_98 = bitcoin_client
+        .get_block_by_height(&98)?
+        .expect("block at height 98 must exist");
+    let block_99 = bitcoin_client
+        .get_block_by_height(&99)?
+        .expect("block at height 99 must exist");
+    let block_100 = bitcoin_client
+        .get_block_by_height(&100)?
+        .expect("block at height 100 must exist");
+
+    info!("Invalidating the last 3 blocks (heights 98, 99 and 100)");
+    bitcoin_client.invalidate_block(&block_100.hash)?;
+    bitcoin_client.invalidate_block(&block_99.hash)?;
+    bitcoin_client.invalidate_block(&block_98.hash)?;
+
+    info!("Ticking once to let the indexer detect the rollback");
+    indexer.tick()?;
+
+    info!("Checking that the indexer and blockchain best height is now 97");
+    assert_eq!(bitcoin_client.get_best_block()?, 97);
+    assert_eq!(indexer.get_best_height()?, Some(97));
+
+    info!("Checking that blocks 98, 99 and 100 are marked as orphan");
+    for height in 98..=100 {
+        let block = indexer
+            .get_block_by_height(height)?
+            .expect("block must exist in indexer store");
+        assert!(
+            block.orphan,
+            "block at height {} should be marked as orphan",
+            height
+        );
+    }
 
     clear_output();
 
