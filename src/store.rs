@@ -6,7 +6,6 @@ use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo};
-use mockall::automock;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
 use tracing::warn;
@@ -73,7 +72,6 @@ pub trait StoreClient {
     fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
 }
 
-#[automock]
 impl StoreClient for IndexerStore {
     fn save_new_best_block(
         &self,

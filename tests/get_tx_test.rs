@@ -24,7 +24,9 @@ fn test_get_transaction_lifecycle() -> Result<(), anyhow::Error> {
         None => tracing::Level::INFO,
     };
 
-    tracing_subscriber::fmt().with_max_level(log_level).init();
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .try_init();
 
     let bitcoind_config = BitcoindConfig::default();
 

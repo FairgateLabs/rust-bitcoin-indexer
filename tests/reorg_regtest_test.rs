@@ -22,7 +22,9 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
         None => tracing::Level::INFO,
     };
 
-    tracing_subscriber::fmt().with_max_level(log_level).init();
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .try_init();
 
     let bitcoind_config = BitcoindConfig::default();
 
@@ -114,6 +116,7 @@ fn reorganization_test() -> Result<(), anyhow::Error> {
     assert_eq!(indexer.get_best_height()?, Some(140));
     assert_eq!(bitcoin_client.get_best_block()?, 140);
 
+    bitcoind.stop()?;
     clear_output();
 
     Ok(())
@@ -130,7 +133,9 @@ fn reorg_marks_last_three_blocks_as_orphan() -> Result<(), anyhow::Error> {
         None => tracing::Level::INFO,
     };
 
-    tracing_subscriber::fmt().with_max_level(log_level).init();
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .try_init();
 
     let bitcoind_config = BitcoindConfig::default();
 
