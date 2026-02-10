@@ -2,7 +2,7 @@ use crate::{
     config::IndexerSettings,
     errors::IndexerError,
     store::{IndexerStore, StoreClient},
-    types::{FullBlock, TransactionInfo, TransactionStatus},
+    types::{FullBlock, TransactionBlockchainStatus, TransactionStatus},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
@@ -50,7 +50,7 @@ pub trait IndexerApi {
     /// Retrieves transaction information for a given transaction ID.
     /// Returns `Ok(TransactionInfo)` with the transaction status, or an `IndexerError` if an error occurs.
     /// If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
-    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionInfo, IndexerError>;
+    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionStatus, IndexerError>;
 
     /// Retrieves the estimated fee rate from the most recently indexed block.
     /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
@@ -211,7 +211,7 @@ where
         Ok(self.store.get_best_block()?)
     }
 
-    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionInfo, IndexerError> {
+    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionStatus, IndexerError> {
         // First, check if transaction is in storage
         let tx_status = self.store.get_tx_info(tx_id)?;
 
@@ -223,7 +223,7 @@ where
 
                 if tx_mempool_status.is_err() {
                     // Transaction is not in mempool, mark as not found
-                    tx_info.status = TransactionStatus::NotFound;
+                    tx_info.status = TransactionBlockchainStatus::NotFound;
                     tx_info.confirmations = 0;
                     tx_info.block_info = None;
                 }
@@ -234,12 +234,12 @@ where
             // Transaction not found in storage, check mempool
             let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
             let status = if tx_mempool_status.is_ok() {
-                TransactionStatus::InMempool
+                TransactionBlockchainStatus::InMempool
             } else {
-                TransactionStatus::NotFound
+                TransactionBlockchainStatus::NotFound
             };
 
-            Ok(TransactionInfo {
+            Ok(TransactionStatus {
                 tx: None,
                 block_info: None,
                 confirmations: 0,
@@ -333,12 +333,8 @@ where
             // Mark all blocks above the blockchain's best height as orphan before updating the height.
             warn!("Indexer is ahead of the blockchain. Marking blocks as orphan and updating synced and best heights to match the blockchain's current best height.");
 
-            // Mark all blocks from best_blockchain_height + 1 to best_indexer_height as orphan
-            let start_orphan_height = best_blockchain_height.saturating_add(1);
-            if start_orphan_height <= best_indexer_height {
-                self.store
-                    .mark_following_blocks_as_orphan(start_orphan_height)?;
-            }
+            self.store
+                .mark_following_blocks_as_orphan(best_blockchain_height + 1)?;
 
             self.store.save_best_height(best_blockchain_height)?;
             return Ok(());

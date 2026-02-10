@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::errors::IndexerStoreError;
-use crate::types::{FullBlock, TransactionInfo, TransactionStatus};
+use crate::types::{FullBlock, TransactionBlockchainStatus, TransactionStatus};
 use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
@@ -63,7 +63,7 @@ pub trait StoreClient {
         block: &BlockInfo,
         estimated_fee_rate: u64,
     ) -> Result<(), IndexerStoreError>;
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError>;
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError>;
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
@@ -171,7 +171,7 @@ impl StoreClient for IndexerStore {
         Ok(block)
     }
 
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionInfo>, IndexerStoreError> {
+    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
         let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key)?;
 
@@ -191,12 +191,12 @@ impl StoreClient for IndexerStore {
             // this indicates a reorg or block invalidation where the blockchain has reverted.
             let status = if block_info.orphan || block_info.height > best_block_height {
                 confirmations = 0;
-                TransactionStatus::Orphan
+                TransactionBlockchainStatus::Orphan
             } else {
-                TransactionStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
+                TransactionBlockchainStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
             };
 
-            Ok(Some(TransactionInfo {
+            Ok(Some(TransactionStatus {
                 tx: Some(tx),
                 block_info: Some(block_info),
                 confirmations,

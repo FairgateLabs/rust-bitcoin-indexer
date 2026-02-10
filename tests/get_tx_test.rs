@@ -3,7 +3,7 @@ use bitcoin::{address::NetworkChecked, Address, Amount, Network};
 use bitcoin_indexer::{
     config::IndexerConfig,
     indexer::{Indexer, IndexerApi},
-    types::TransactionStatus,
+    types::TransactionBlockchainStatus,
 };
 use bitcoincore_rpc::RpcApi;
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
@@ -76,7 +76,7 @@ fn test_get_transaction_lifecycle() -> Result<(), anyhow::Error> {
     // Step 4: Check that the transaction is in mempool
     info!("Checking that get_transaction returns InMempool status");
     let tx_info = indexer.get_transaction(&txid)?;
-    assert_eq!(tx_info.status, TransactionStatus::InMempool);
+    assert_eq!(tx_info.status, TransactionBlockchainStatus::InMempool);
     assert_eq!(tx_info.confirmations, 0);
     assert!(tx_info.block_info.is_none());
     assert!(tx_info.tx.is_none()); // Transaction not in storage yet, only in mempool
@@ -92,7 +92,7 @@ fn test_get_transaction_lifecycle() -> Result<(), anyhow::Error> {
     // Step 7: Check that the transaction is confirmed
     info!("Checking that get_transaction returns Confirmed status");
     let tx_info = indexer.get_transaction(&txid)?;
-    assert_eq!(tx_info.status, TransactionStatus::Confirmed);
+    assert_eq!(tx_info.status, TransactionBlockchainStatus::Confirmed);
     assert_eq!(tx_info.confirmations, 1);
     assert!(tx_info.block_info.is_some());
     assert!(tx_info.tx.is_some());
@@ -117,7 +117,7 @@ fn test_get_transaction_lifecycle() -> Result<(), anyhow::Error> {
     // Step 10: Check that the transaction is now orphan
     info!("Checking that get_transaction returns Confirmed status with 1 confirmation");
     let tx_info = indexer.get_transaction(&txid)?;
-    assert_eq!(tx_info.status, TransactionStatus::Confirmed);
+    assert_eq!(tx_info.status, TransactionBlockchainStatus::Confirmed);
     assert_eq!(tx_info.confirmations, 1);
     assert!(!tx_info.is_orphan());
 
