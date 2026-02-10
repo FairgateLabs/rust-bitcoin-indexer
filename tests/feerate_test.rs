@@ -1,301 +1,281 @@
-use bitcoin::BlockHash;
+use bitcoin::hashes::Hash;
 use bitcoin_indexer::{
-    config::IndexerSettings,
+    config::{IndexerConfig, IndexerSettings},
     indexer::{Indexer, IndexerApi},
 };
-use bitvmx_bitcoin_rpc::{bitcoin_client::MockBitcoinClient, types::*};
+use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
+use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
+use bitvmx_settings::settings;
 mod utils;
-use crate::utils::clear_output;
-use mockall::predicate::eq;
-use std::str::FromStr;
-use utils::get_indexer_store;
+use crate::utils::{clear_output, wait_for_port_available, get_indexer_store};
 
+/// Tests fee rate estimation with 7 transactions having different fee rates.
+/// Verifies that the median fee rate is correctly calculated.
 #[test]
 fn test_get_estimated_fee_rate_with_seven_transactions() -> Result<(), anyhow::Error> {
-    use bitcoin::{
-        absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn,
-        TxOut,
-    };
-    use bitcoin_indexer::indexer::{Indexer, IndexerApi};
-    use serde_json::json;
-
-    let mut bitcoin_client = MockBitcoinClient::new();
+    use bitcoin::key::rand::rngs::OsRng;
+    use bitcoin::secp256k1::{Secp256k1, SecretKey};
+    use bitcoin::Amount;
+    use bitcoin::transaction::{Transaction, TxIn, TxOut};
+    use bitcoin::absolute::LockTime;
+    use bitcoin::transaction::Version;
+    use bitcoin::Sequence;
+    use bitcoin::OutPoint;
+    use bitcoin::Witness;
+    use bitcoin::PrivateKey;
+    use bitcoin::sighash::{SighashCache, EcdsaSighashType};
+    use bitcoin::Network;
+    use bitcoin::PublicKey;
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+    
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    
+    // Mine blocks to have mature coins
+    bitcoin_client.mine_blocks_to_address(101, &wallet)?;
+    
+    let secp = Secp256k1::new();
+    
+    // Step 1: Create 7 UTXOs with known private keys
+    let mut utxo_data = Vec::new();
+    
+    for i in 0..7 {
+        let secret_key = SecretKey::new(&mut OsRng);
+        let private_key = PrivateKey::new(secret_key, Network::Regtest);
+        let secp_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+        let public_key = PublicKey {
+            compressed: true,
+            inner: secp_pubkey,
+        };
+        
+        let address = bitcoin_client.get_new_address(public_key.clone(), Network::Regtest)?;
+        
+        // Fund with 100,000 sats
+        let (funding_tx, vout) = bitcoin_client.fund_address(&address, Amount::from_sat(100_000))?;
+        let txid = funding_tx.compute_txid();
+        
+        utxo_data.push((txid, vout, private_key, address.script_pubkey(), public_key));
+        println!("  Created UTXO {}: {}:{}", i, txid, vout);
+    }
+    
+    // Step 2: Create and sign 7 transactions with different fees
+    // Fee rates: 10, 20, 30, 40, 50, 60, 70 sat/vB (median should be 40)
+    let mut signed_txs = Vec::new();
+    let fee_rates = vec![10, 20, 30, 40, 50, 60, 70]; // sat/vB
+    
+    for (i, (prev_txid, prev_vout, private_key, prev_script_pubkey, public_key)) in utxo_data.iter().enumerate() {
+        let output_secret = SecretKey::new(&mut OsRng);
+        let output_secp_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &output_secret);
+        let output_public_key = PublicKey {
+            compressed: true,
+            inner: output_secp_pubkey,
+        };
+        let output_address = bitcoin_client.get_new_address(output_public_key, Network::Regtest)?;
+        
+        let target_fee_rate = fee_rates[i];
+        
+        // First pass: Create and sign with a temporary fee to get actual vsize
+        let mut tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: *prev_txid,
+                    vout: *prev_vout,
+                },
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(99_000), // Temporary value
+                script_pubkey: output_address.script_pubkey(),
+            }],
+        };
+        
+        // Sign to get actual size
+        let sighash_type = EcdsaSighashType::All;
+        let mut sighash_cache = SighashCache::new(&tx);
+        
+        let sighash = sighash_cache.p2wpkh_signature_hash(
+            0,
+            prev_script_pubkey,
+            Amount::from_sat(100_000),
+            sighash_type,
+        )?;
+        
+        let msg = bitcoin::secp256k1::Message::from_digest(*sighash.as_byte_array());
+        let signature = secp.sign_ecdsa(&msg, &private_key.inner);
+        
+        let mut sig_with_hashtype = signature.serialize_der().to_vec();
+        sig_with_hashtype.push(sighash_type.to_u32() as u8);
+        
+        let sig_push_bytes = bitcoin::script::PushBytesBuf::try_from(sig_with_hashtype.clone())
+            .expect("Signature should fit in PushBytes");
+        
+        tx.input[0].witness.push(sig_push_bytes.as_bytes());
+        tx.input[0].witness.push(public_key.to_bytes());
+        
+        // Get actual vsize and calculate exact fee
+        let actual_vsize = tx.vsize() as u64;
+        let exact_fee = target_fee_rate * actual_vsize;
+        
+        // Second pass: Recreate transaction with exact fee and re-sign
+        let mut final_tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: *prev_txid,
+                    vout: *prev_vout,
+                },
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(100_000 - exact_fee),
+                script_pubkey: output_address.script_pubkey(),
+            }],
+        };
+        
+        // Re-sign with new output value (outputs are part of SegWit sighash)
+        let mut final_sighash_cache = SighashCache::new(&final_tx);
+        
+        let final_sighash = final_sighash_cache.p2wpkh_signature_hash(
+            0,
+            prev_script_pubkey,
+            Amount::from_sat(100_000),
+            sighash_type,
+        )?;
+        
+        let final_msg = bitcoin::secp256k1::Message::from_digest(*final_sighash.as_byte_array());
+        let final_signature = secp.sign_ecdsa(&final_msg, &private_key.inner);
+        
+        let mut final_sig_with_hashtype = final_signature.serialize_der().to_vec();
+        final_sig_with_hashtype.push(sighash_type.to_u32() as u8);
+        
+        let final_sig_push_bytes = bitcoin::script::PushBytesBuf::try_from(final_sig_with_hashtype)
+            .expect("Signature should fit in PushBytes");
+        
+        final_tx.input[0].witness.push(final_sig_push_bytes.as_bytes());
+        final_tx.input[0].witness.push(public_key.to_bytes());
+        
+        let final_vsize = final_tx.vsize() as u64;
+        let final_fee_rate = exact_fee / final_vsize;
+        
+        println!("  Transaction {}: fee={} sat, vsize={}, rate={} sat/vB (target: {})", 
+                 i, exact_fee, final_vsize, final_fee_rate, target_fee_rate);
+        
+        // Verify exact fee rate
+        assert_eq!(final_fee_rate, target_fee_rate, 
+                   "Transaction {} should have exact fee rate {}", i, target_fee_rate);
+        
+        signed_txs.push(final_tx);
+    }
+    
+    // Step 3: Broadcast all transactions
+    for (i, tx) in signed_txs.iter().enumerate() {
+        match bitcoin_client.send_transaction(tx) {
+            Ok(_) => println!("  ✓ Broadcasted transaction {}", i),
+            Err(e) => {
+                println!("  ✗ Failed to broadcast transaction {}: {}", i, e);
+                bitcoind.stop()?;
+                clear_output();
+                return Err(e.into());
+            }
+        }
+    }
+    
+    // Step 4: Mine one block to include all transactions
+    bitcoin_client.mine_blocks_to_address(1, &wallet)?;
+    
+    // Create indexer and process the block
     let store = get_indexer_store();
-
-    let hash =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash =
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
-
-    // Create 7 transactions with different fee rates
-    // Transaction with feerate 1 sat/vbyte: fee = 1 sat, vsize = 1 vbyte
-    let tx1 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000001",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(1000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 2 sat/vbyte: fee = 2 sat, vsize = 1 vbyte
-    let tx2 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000002",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(2000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 3 sat/vbyte: fee = 3 sat, vsize = 1 vbyte
-    let tx3 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000003",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(3000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 4 sat/vbyte: fee = 4 sat, vsize = 1 vbyte (this will be the middle transaction)
-    let tx4 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000004",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(4000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 5 sat/vbyte: fee = 5 sat, vsize = 1 vbyte
-    let tx5 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000005",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(5000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 6 sat/vbyte: fee = 6 sat, vsize = 1 vbyte
-    let tx6 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000006",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(6000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    // Transaction with feerate 7 sat/vbyte: fee = 7 sat, vsize = 1 vbyte
-    let tx7 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000007",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(7000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    let block_info = BlockInfo {
-        height: 1000,
-        hash: hash.clone(),
-        prev_hash: prev_hash.clone(),
-        txs: vec![
-            tx1.clone(),
-            tx2.clone(),
-            tx3.clone(),
-            tx4.clone(),
-            tx5.clone(),
-            tx6.clone(),
-            tx7.clone(),
-        ],
-    };
-
-    // The middle transaction (index 3) is tx4, which should have feerate 4 sat/vbyte
-    let middle_tx_id = tx4.compute_txid();
-
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(1000));
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1000))
-        .returning(move |_| Ok(Some(block_info.clone())));
-
-    // Mock the RPC call for the middle transaction (tx4) to return fee=4 sat, vsize=1 vbyte
-    bitcoin_client
-        .expect_get_raw_transaction_verbosity_two()
-        .with(eq(middle_tx_id))
-        .returning(move |_| {
-            Ok(json!({
-                "fee": 0.00000004, // 4 satoshis in BTC
-                "vsize": 1
-            }))
-        });
-
     let indexer = Indexer::new(
         bitcoin_client,
         store,
-        Some(IndexerSettings::new(Some(1000))),
+        Some(IndexerSettings::new(Some(100))),
     )?;
-
-    // First tick should process the block and calculate the estimated fee rate
-    indexer.tick()?;
-
-    // Get the block and check that the estimated fee rate is 4 (from the middle transaction)
+    
+    // Sync to the latest block
+    for _ in 0..20 {
+        indexer.tick()?;
+    }
+    
     let best_block = indexer.get_best_block()?;
-    assert_eq!(best_block.unwrap().estimated_fee_rate, 4);
-
-    // Also test the get_estimated_fee_rate method
+    assert!(best_block.is_some(), "Indexer should have processed blocks");
+    
+    let block = best_block.unwrap();
+    
+    // Verify the block has 8 transactions (1 coinbase + 7 spending)
+    assert_eq!(block.txs.len(), 8, "Block should have 8 transactions (1 coinbase + 7 spending)");
+    assert!(block.txs[0].is_coinbase(), "First transaction should be coinbase");
+    
+    // The median of fee rates [10, 20, 30, 40, 50, 60, 70] should be exactly 40
+    assert_eq!(block.estimated_fee_rate, 40, 
+            "Median fee rate should be exactly 40 sat/vB, got {}", 
+            block.estimated_fee_rate);
+    
+    // Test the get_estimated_fee_rate API method
     let estimated_fee_rate = indexer.get_estimated_fee_rate()?;
-    assert_eq!(estimated_fee_rate, 4);
-
+    assert_eq!(estimated_fee_rate, 40, "get_estimated_fee_rate should return exactly 40 sat/vB");
+    assert_eq!(estimated_fee_rate, block.estimated_fee_rate);
+    
+    bitcoind.stop()?;
     clear_output();
+    assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     Ok(())
 }
 
 #[test]
 fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error> {
-    use bitcoin::{absolute::LockTime, transaction::Version, Transaction};
     use bitcoin_indexer::errors::IndexerError;
+    clear_output();
 
-    let mut bitcoin_client = MockBitcoinClient::new();
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let store = get_indexer_store();
 
-    let hash =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash =
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
-
-    // Create a simple transaction for the block
-    let tx = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-
-    let block_info = BlockInfo {
-        height: 1000,
-        hash: hash.clone(),
-        prev_hash: prev_hash.clone(),
-        txs: vec![tx],
-    };
-
-    // Set up the indexer to be at height 1000
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(1000));
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1000))
-        .returning(move |_| Ok(Some(block_info.clone())));
+    // Mine blocks to height 101
+    bitcoin_client.mine_blocks_to_address(101, &wallet)?;
+    
+    // Create a second client to mine more blocks later
+    let bitcoin_client_2 = BitcoinClient::new_from_config(&config.bitcoin)?;
 
     let indexer = Indexer::new(
         bitcoin_client,
         store,
-        Some(IndexerSettings::new(Some(1000))),
+        Some(IndexerSettings::new(Some(100))),
     )?;
 
-    // Process the block so the indexer is at height 1000
+    // Process the block so the indexer is at height 100
     indexer.tick()?;
 
-    // Now mock the bitcoin client to return a different blockchain height (1001)
-    // This will create a scenario where indexer height (1000) != blockchain height (1001)
-    let mut new_bitcoin_client = MockBitcoinClient::new();
-    new_bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(1001)); // Blockchain is ahead of indexer
+    // Mine one more block so blockchain is ahead
+    bitcoin_client_2.mine_blocks_to_address(1, &wallet)?;
 
-    // Create a new indexer instance with the updated bitcoin client
-    let new_indexer = Indexer {
-        bitcoin_client: new_bitcoin_client,
-        store: indexer.store.clone(),
-    };
-
-    // Try to get estimated fee rate when indexer is not synced
-    let result = new_indexer.get_estimated_fee_rate();
+    // Try to get estimated fee rate when indexer is not synced (indexer at 100, blockchain at 102)
+    let result = indexer.get_estimated_fee_rate();
 
     // Should return IndexerError::IndexerNotSynced
     assert!(result.is_err());
@@ -311,95 +291,45 @@ fn test_get_estimated_fee_rate_indexer_not_synced() -> Result<(), anyhow::Error>
         }
     }
 
+    bitcoind.stop()?;
     clear_output();
+    assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     Ok(())
 }
 
 #[test]
 fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
-    use bitcoin::{
-        absolute::LockTime, transaction::Version, Amount, OutPoint, ScriptBuf, Transaction, TxIn,
-        TxOut,
-    };
     use bitcoin_indexer::errors::IndexerError;
+    clear_output();
 
-    let mut bitcoin_client = MockBitcoinClient::new();
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let store = get_indexer_store();
 
-    let hash =
-        BlockHash::from_str("000000000000000000076c3e2e0f70537b1bf75268e502e0123b35a6207bf7e2")?;
-    let prev_hash =
-        BlockHash::from_str("000000000000000000045bc1e2ff2a08d10e3fae9b0a8b3536acb6f43adf1234")?;
-
-    // Create only 2 transactions - this will be less than MIN_BLOCK_TX (5)
-    // This will cause the fee estimation to return 0 (ERROR_FEE_RATE)
-    let tx1 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000001",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(1000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    let tx2 = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(
-                bitcoin::hash_types::Txid::from_str(
-                    "0000000000000000000000000000000000000000000000000000000000000002",
-                )?,
-                0,
-            ),
-            script_sig: ScriptBuf::new(),
-            sequence: bitcoin::transaction::Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: bitcoin::Witness::new(),
-        }],
-        output: vec![TxOut {
-            value: Amount::from_sat(2000),
-            script_pubkey: ScriptBuf::new(),
-        }],
-    };
-
-    let block_info = BlockInfo {
-        height: 1000,
-        hash: hash.clone(),
-        prev_hash: prev_hash.clone(),
-        txs: vec![tx1, tx2], // Only 2 transactions - less than MIN_BLOCK_TX (5)
-    };
-
-    bitcoin_client
-        .expect_get_best_block()
-        .returning(|| Ok(1000));
-
-    bitcoin_client
-        .expect_get_block_by_height()
-        .with(eq(1000))
-        .returning(move |_| Ok(Some(block_info.clone())));
+    // Mine just 101 blocks - only coinbase transactions, no user transactions
+    // This will cause blocks to have estimated_fee_rate = 0 because there are too few transactions
+    bitcoin_client.mine_blocks_to_address(101, &wallet)?;
 
     let indexer = Indexer::new(
         bitcoin_client,
         store,
-        Some(IndexerSettings::new(Some(1000))),
+        Some(IndexerSettings::new(Some(100))),
     )?;
 
-    // Process the block - this will save the block with estimated_fee_rate = 0
-    // because the block has only 2 transactions (less than MIN_BLOCK_TX = 5)
+    // Process the block
     indexer.tick()?;
 
     // Verify the block was saved with estimated_fee_rate = 0
+    // (because blocks with only coinbase have too few transactions for fee estimation)
     let best_block = indexer.get_best_block()?;
     assert_eq!(best_block.unwrap().estimated_fee_rate, 0);
 
@@ -421,6 +351,9 @@ fn test_get_estimated_fee_rate_not_estimated() -> Result<(), anyhow::Error> {
         }
     }
 
+    bitcoind.stop()?;
     clear_output();
+    assert!(wait_for_port_available(5), "Port 18443 should be available after container stop");
     Ok(())
 }
+
