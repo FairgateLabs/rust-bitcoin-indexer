@@ -141,7 +141,8 @@ fn reorg_marks_last_three_blocks_as_orphan() -> Result<(), anyhow::Error> {
     let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
     let wallet = bitcoin_client.init_wallet("reorg_orphans_wallet")?;
     let indexer_store = get_indexer_store();
-    let indexer = Indexer::new(bitcoin_client.clone(), indexer_store.clone(), None)?;
+    let bitcoin_client_for_indexer = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(bitcoin_client_for_indexer, indexer_store.clone(), None)?;
 
     info!("Mining 100 blocks to wallet");
     bitcoin_client.mine_blocks_to_address(100, &wallet)?;
