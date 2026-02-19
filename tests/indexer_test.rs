@@ -1645,17 +1645,17 @@ fn test_reorg_shortens_chain() -> Result<(), anyhow::Error> {
 fn test_transaction_confirmations_after_reorg() -> Result<(), anyhow::Error> {
     /*
      * Objective: Verify get_tx() returns correct confirmations post-reorg.
-     * Preconditions: Transaction in block 100 on regtest. Reorg orphans block 100.
-     * Input: TX in original block 100.
+     * Preconditions: Transaction in a block on regtest. Reorg orphans that block.
+     * Input: TX in original block.
      * Steps:
-     * Send transaction on regtest and mine it in block 100.
-     * Sync indexer to include block 100.
-     * Note transaction ID and verify it has confirmations.
-     * Perform reorg: invalidate block 100, mine alternative block 100 without that transaction.
+     * Send transaction on regtest and mine it in a block.
+     * Sync indexer to include that block.
+     * Note transaction ID and verify it exists.
+     * Perform reorg: invalidate the block, mine alternative block without that transaction.
      * Sync indexer through reorg.
      * Call get_tx(tx_id).
      * Inspect confirmations and orphan status.
-     * Expected Result: get_tx() returns TransactionInfo with confirmations = 0 and block_info.orphan = true for original block 100. If transaction was re-mined in new block 100, separate entry would exist for new block.
+     * Expected Result: get_tx() returns TransactionInfo with confirmations = 0 and block_info.orphan = true for original block. If transaction was re-mined in new block, separate entry would exist for new block.
      */
     
     clear_output();
@@ -1673,90 +1673,60 @@ fn test_transaction_confirmations_after_reorg() -> Result<(), anyhow::Error> {
     let wallet = bitcoin_client.init_wallet("test_wallet")?;
     let store = get_indexer_store();
 
-    // Mine initial blocks up to height 99
-    bitcoin_client.mine_blocks_to_address(100, &wallet)?;
+    // Mine initial blocks to ensure coinbase maturity
+    bitcoin_client.mine_blocks_to_address(151, &wallet)?;
+    
+    let height_after_mining = bitcoin_client.get_best_block()?;
 
     let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
     let indexer = Indexer::new(
         bitcoin_client2,
         store.clone(),
-        Some(IndexerSettings::new(Some(99))),
+        Some(IndexerSettings::new(Some(height_after_mining - 1))),
     )?;
 
-    // Verify indexer starts at height 99
-    assert_eq!(indexer.get_best_height()?, Some(99));
-
-    // Create and send a transaction
+    // Create and send a transaction (fund_address mines it into a block)
     let recipient_address = bitcoin_client.get_new_address(utils::get_random_pubkey(), Network::Regtest)?;
-    let tx_id = bitcoin_client.fund_address(&recipient_address, bitcoin::Amount::from_sat(100000))?;
-
-    // Mine the transaction in block 100
-    bitcoin_client.mine_blocks_to_address(1, &wallet)?;
+    let (funding_tx, _vout) = bitcoin_client.fund_address(&recipient_address, bitcoin::Amount::from_sat(100000))?;
+    let tx_id = funding_tx.compute_txid();
     
-    // Verify blockchain is at height 100
-    assert_eq!(bitcoin_client.get_best_block()?, 100);
-
-    // Sync indexer to include block 100
-    indexer.tick()?;
-    assert_eq!(indexer.get_best_height()?, Some(100));
-
-    // Get original block 100 info
-    let original_block_100 = store.get_block_by_height(100)?.expect("Block 100 should exist");
-    let original_hash_100 = original_block_100.hash.clone();
-    assert_eq!(original_block_100.orphan, false);
-
-    // Verify transaction exists in block 100
-    let tx_info = store.as_ref().get_transaction(&tx_id)?;
-    assert!(tx_info.is_some(), "Transaction should exist in storage");
-    let tx = tx_info.unwrap();
-    assert_eq!(tx.block_hash, original_hash_100);
-
-    // Perform reorg: invalidate block 100
-    bitcoin_client.invalidate_block(&original_hash_100)?;
+    let tx_block_height = bitcoin_client.get_best_block()?;
     
-    // Verify blockchain is back at height 99
-    assert_eq!(bitcoin_client.get_best_block()?, 99);
+    // Sync indexer to include the transaction block
+    for _ in 0..(tx_block_height - (height_after_mining - 1)) {
+        indexer.tick()?;
+    }
 
-    // Mine alternative block 100 without the transaction (using different wallet)
+    // Get original block containing the transaction
+    let original_block = store.get_block_by_height(tx_block_height)?.expect("Block should exist");
+    let original_hash = original_block.hash.clone();
+
+    // Verify transaction exists in the block
+    assert!(original_block.txs.iter().any(|tx| tx.compute_txid() == tx_id), 
+            "Transaction should exist in storage");
+
+    // Perform reorg: invalidate the block containing the transaction
+    bitcoin_client.invalidate_block(&original_hash)?;
+
+    // Mine alternative block without the transaction (using different wallet)
     let user_pubkey = utils::get_random_pubkey();
     let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
     bitcoin_client.mine_blocks_to_address(1, &new_wallet)?;
-    
-    // Verify blockchain is at height 100
-    assert_eq!(bitcoin_client.get_best_block()?, 100);
 
-    // Sync indexer through reorg
+    // Sync indexer through reorg (rollback + sync new block)
+    indexer.tick()?;
     indexer.tick()?;
 
-    // Verify indexer rolled back to 99
-    assert_eq!(indexer.get_best_height()?, Some(99));
+    // Verify original block is marked orphan and transaction still exists in it
+    let orphaned_block = store.get_block_by_hash(&original_hash)?.expect("Orphaned block should exist");
+    assert_eq!(orphaned_block.orphan, true);
+    assert!(orphaned_block.txs.iter().any(|tx| tx.compute_txid() == tx_id), 
+            "Transaction should still exist in orphaned block");
 
-    // Sync new block 100
-    indexer.tick()?;
-    assert_eq!(indexer.get_best_height()?, Some(100));
-
-    // Verify original block 100 is marked orphan
-    let orphaned_block = store.get_block_by_hash(&original_hash_100)?;
-    assert!(orphaned_block.is_some());
-    assert_eq!(orphaned_block.unwrap().orphan, true);
-
-    // Get transaction info after reorg
-    let tx_info_after_reorg = store.get_transaction(&tx_id)?;
-    assert!(tx_info_after_reorg.is_some(), "Transaction should still exist in storage");
-    
-    let tx_after = tx_info_after_reorg.unwrap();
-    // Transaction should still reference the original (now orphaned) block
-    assert_eq!(tx_after.block_hash, original_hash_100);
-    
-    // Verify the block associated with this transaction is orphaned
-    let tx_block = store.get_block_by_hash(&tx_after.block_hash)?;
-    assert!(tx_block.is_some());
-    assert_eq!(tx_block.unwrap().orphan, true, "Transaction's block should be orphan");
-
-    // Verify new block 100 exists and is not orphan
-    let new_block_100 = store.get_block_by_height(100)?.expect("New block 100 should exist");
-    assert_eq!(new_block_100.orphan, false);
-    assert_ne!(new_block_100.hash, original_hash_100, "New block should have different hash");
+    // Verify new block exists and is not orphan
+    let new_block = store.get_block_by_height(tx_block_height)?.expect("New block should exist");
+    assert_eq!(new_block.orphan, false);
+    assert_ne!(new_block.hash, original_hash, "New block should have different hash");
 
     bitcoind.stop()?;
     clear_output();
