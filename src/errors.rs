@@ -44,4 +44,10 @@ pub enum IndexerError {
 
     #[error("Checkpoint height is behind indexed height")]
     CheckpointHeightBehindIndexedHeight,
+
+    #[error("Missing transaction data in tx_status")]
+    MissingTransactionData,
+
+    #[error("Missing block info in tx_status")]
+    MissingBlockInfo,
 }

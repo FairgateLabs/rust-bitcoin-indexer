@@ -2,6 +2,8 @@ use bitcoin::{BlockHash, Transaction, Txid};
 use bitvmx_bitcoin_rpc::types::BlockHeight;
 use serde::{Deserialize, Serialize};
 
+use crate::errors::IndexerError;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FullBlock {
     pub height: BlockHeight,
@@ -76,8 +78,19 @@ impl TransactionStatus {
         self.status == TransactionBlockchainStatus::NotFound
     }
 
-    pub fn tx_id(&self) -> Txid {
-        self.tx.as_ref().unwrap().compute_txid()
+    pub fn tx_id_or_error(&self) -> Result<Txid, IndexerError> {
+        let tx = self.tx_or_err()?;
+        Ok(tx.compute_txid())
+    }
+
+    pub fn tx_or_err(&self) -> Result<&Transaction, IndexerError> {
+        self.tx.as_ref().ok_or(IndexerError::MissingTransactionData)
+    }
+
+    pub fn block_info_or_err(&self) -> Result<&FullBlock, IndexerError> {
+        self.block_info
+            .as_ref()
+            .ok_or(IndexerError::MissingBlockInfo)
     }
 }
 
