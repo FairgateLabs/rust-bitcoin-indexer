@@ -11,7 +11,6 @@ use storage_backend::storage::Storage;
 use tracing::warn;
 pub struct IndexerStore {
     store: Rc<Storage>,
-    confirmation_threshold: u32,
 }
 
 enum StoreKey {
@@ -24,11 +23,8 @@ enum StoreKey {
 }
 
 impl IndexerStore {
-    pub fn new(store: Rc<Storage>, confirmation_threshold: u32) -> Result<Self, IndexerStoreError> {
-        Ok(Self {
-            store,
-            confirmation_threshold,
-        })
+    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerStoreError> {
+        Ok(Self { store })
     }
 
     fn get_key(&self, key: StoreKey) -> String {
@@ -199,7 +195,6 @@ impl StoreClient for IndexerStore {
                 block_info: Some(block_info),
                 confirmations,
                 status,
-                confirmation_threshold: self.confirmation_threshold, // Will be updated in indexer with actual threshold
             }))
         } else {
             Ok(None)

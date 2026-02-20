@@ -10,7 +10,6 @@ bitcoin:
 
 settings:
     checkpoint_height: 1
-    confirmation_threshold: 6
 
 # possible values: error | warn | info | debug | trace
 log_level: info

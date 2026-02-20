@@ -99,7 +99,7 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
     #[cfg(not(target_os = "windows"))]
     {
         let store = Rc::new(Storage::new(&config).unwrap());
-        let indexer_store = IndexerStore::new(store, 6).unwrap();
+        let indexer_store = IndexerStore::new(store).unwrap();
         Rc::new(indexer_store)
     }
 }

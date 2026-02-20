@@ -20,7 +20,6 @@ pub struct TransactionStatus {
     pub block_info: Option<FullBlock>,
     pub confirmations: u32,
     pub status: TransactionBlockchainStatus,
-    pub confirmation_threshold: u32,
 }
 
 impl TransactionStatus {
@@ -29,22 +28,20 @@ impl TransactionStatus {
         block_info: FullBlock,
         status: TransactionBlockchainStatus,
         confirmations: u32,
-        confirmation_threshold: u32,
     ) -> Self {
         Self {
             tx: Some(tx),
             block_info: Some(block_info),
             confirmations,
             status,
-            confirmation_threshold,
         }
     }
 
-    pub fn is_finalized(&self) -> bool {
+    pub fn is_finalized(&self, max_monitoring_confirmations: u32) -> bool {
         // A transaction is considered finalized if:
         // - The status is Finalized
         // - The number of confirmations meets or exceeds the confirmation threshold
-        self.confirmations >= self.confirmation_threshold
+        self.confirmations >= max_monitoring_confirmations
             && self.status == TransactionBlockchainStatus::Finalized
     }
 

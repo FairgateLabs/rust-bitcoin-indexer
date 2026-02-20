@@ -930,7 +930,7 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
 
     let storage_config = storage_backend::storage_config::StorageConfig::new(path_str, None);
     let storage = std::rc::Rc::new(storage_backend::storage::Storage::new(&storage_config)?);
-    let store = std::rc::Rc::new(IndexerStore::new(storage.clone(), 6)?);
+    let store = std::rc::Rc::new(IndexerStore::new(storage.clone())?);
 
     // Mine enough blocks to reach height 80
     bitcoin_client.mine_blocks_to_address(85, &wallet)?;

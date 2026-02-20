@@ -241,7 +241,6 @@ where
                 block_info: None,
                 confirmations: 0,
                 status,
-                confirmation_threshold: self.settings.confirmation_threshold,
             })
         }
     }
@@ -586,7 +585,7 @@ mod tests {
                 .as_nanos()
         );
         let storage = Rc::new(Storage::new(&StorageConfig::new(db_path.clone(), None))?);
-        let store = Rc::new(IndexerStore::new(storage, 6)?);
+        let store = Rc::new(IndexerStore::new(storage)?);
 
         let indexer = crate::indexer::Indexer::new(bitcoin_client, store.clone(), None)?;
 

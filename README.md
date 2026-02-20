@@ -116,10 +116,6 @@ The `checkpoint_height` is an optional setting in the indexer configuration that
 - **Without Checkpoint Height**:
   - If not set, indexing will start from the genesis block or from the last indexed height if there's an existing index.
 
-### Confirmation Threshold
-
-The `confirmation_threshold` is a setting that determines when a transaction is considered "finalized". When a transaction has at least `confirmation_threshold` confirmations, its status will be set to `TransactionBlockchainStatus::Finalized`. Otherwise, it will be `TransactionBlockchainStatus::Confirmed`. The default value is `0`.
-
 To configure these settings:
 
 ```yaml
