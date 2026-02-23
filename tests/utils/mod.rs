@@ -49,7 +49,7 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
         loop {
             match std::fs::create_dir_all(&absolute_path) {
                 Ok(_) => break,
-                Err(e) if attempts < MAX_ATTEMPTS - 1 => {
+                Err(_e) if attempts < MAX_ATTEMPTS - 1 => {
                     attempts += 1;
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }

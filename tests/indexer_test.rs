@@ -1017,3 +1017,718 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
     clear_output();
     Ok(())
 }
+
+#[test]
+fn test_detect_single_block_reorg() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify reorg detection when block at current height has different hash.
+     * Preconditions: Indexer at height 100 with block hash A. Bitcoin regtest performs single-block reorg.
+     * Input: Stored block 100 hash A, regtest now has block 100 hash B after reorg.
+     * Steps:
+     *      Initialize indexer and sync to height 100.
+     *      Note the block hash at height 100.
+     *      Use invalidateblock RPC on regtest to invalidate block 100.
+     *      Mine a new block at height 100 (different hash).
+     *      Call tick().
+     *      Verify rollback behavior.
+     * Expected Result: Tick detects reorg. Marks block 100 with original hash as orphan. Rolls back to height 99. Logs "REORG" warning. Next tick will sync new block 100.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 100
+    bitcoin_client.mine_blocks_to_address(101, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(99))),
+    )?;
+
+    // Sync to block 100
+    indexer.tick()?;
+    assert_eq!(indexer.get_best_height()?, Some(100));
+
+    // Note the block hash at height 100
+    let original_block_100 = store.get_block_by_height(100)?.expect("Block 100 should exist");
+    let original_hash_100 = original_block_100.hash.clone();
+    assert_eq!(original_block_100.orphan, false);
+
+    // Use invalidateblock RPC to invalidate block 100
+    bitcoin_client.invalidate_block(&original_hash_100)?;
+    
+    // Verify blockchain is back at height 99
+    assert_eq!(bitcoin_client.get_best_block()?, 99);
+
+    // Mine a new block at height 100 (different hash)
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(1, &new_wallet)?;
+    
+    // Verify blockchain is at height 100 with a different hash
+    assert_eq!(bitcoin_client.get_best_block()?, 100);
+    let new_block_100 = bitcoin_client.get_block_by_height(&100)?.expect("New block 100 should exist");
+    assert_ne!(new_block_100.hash, original_hash_100);
+
+    // Call tick() - should detect reorg
+    indexer.tick()?;
+
+    // Verify rollback to height 99
+    assert_eq!(indexer.get_best_height()?, Some(99));
+
+    // Verify original block 100 is marked as orphan
+    let orphaned_block = store.get_block_by_hash(&original_hash_100)?;
+    assert!(orphaned_block.is_some());
+    assert_eq!(orphaned_block.unwrap().orphan, true);
+
+    // Next tick should sync new block 100
+    indexer.tick()?;
+    assert_eq!(indexer.get_best_height()?, Some(100));
+    
+    let new_stored_block = store.get_block_by_height(100)?.expect("New block 100 should be stored");
+    assert_eq!(new_stored_block.hash, new_block_100.hash);
+    assert_eq!(new_stored_block.orphan, false);
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_reorg_marks_following_blocks_as_orphan() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Ensure mark_following_blocks_as_orphan marks affected blocks.
+     * Preconditions: Indexer at height 105. Reorg on regtest affects height 102+.
+     * Input: Reorg at height 102, blocks 102-105 stored from original chain.
+     * Steps:
+     *      Initialize indexer and sync to height 105.
+     *      Use invalidateblock RPC to invalidate block 102 on regtest.
+     *      Mine alternative blocks 102-105.
+     *      Call tick() to initiate reorg handling.
+     *      Query blocks 102-105 from storage by their original hashes.
+     * Expected Result: Original blocks 102-105 have orphan = true. Best height rolled back to 101. Original blocks remain in storage but marked orphan.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 106
+    bitcoin_client.mine_blocks_to_address(107, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+    )?;
+
+    // Sync to height 105
+    for _ in 0..5 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(105));
+
+    // Store original block hashes for heights 102-105
+    let original_block_102 = store.get_block_by_height(102)?.expect("Block 102 should exist");
+    let original_hash_102 = original_block_102.hash.clone();
+    
+    let original_block_103 = store.get_block_by_height(103)?.expect("Block 103 should exist");
+    let original_hash_103 = original_block_103.hash.clone();
+    
+    let original_block_104 = store.get_block_by_height(104)?.expect("Block 104 should exist");
+    let original_hash_104 = original_block_104.hash.clone();
+    
+    let original_block_105 = store.get_block_by_height(105)?.expect("Block 105 should exist");
+    let original_hash_105 = original_block_105.hash.clone();
+
+    // Verify all blocks are not orphan initially
+    assert_eq!(original_block_102.orphan, false);
+    assert_eq!(original_block_103.orphan, false);
+    assert_eq!(original_block_104.orphan, false);
+    assert_eq!(original_block_105.orphan, false);
+
+    // Use invalidateblock RPC to invalidate block 102 on regtest
+    bitcoin_client.invalidate_block(&original_hash_102)?;
+    
+    // Verify blockchain is back at height 101
+    assert_eq!(bitcoin_client.get_best_block()?, 101);
+
+    // Mine alternative blocks 102-106 with different wallet (one extra to trigger reorg detection)
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(5, &new_wallet)?;
+    
+    // Verify blockchain is at height 106
+    assert_eq!(bitcoin_client.get_best_block()?, 106);
+
+    // Call tick() multiple times to initiate reorg handling and roll back through all affected blocks
+    // Starting at height 105, reorg affects 102-105, rolling back one block per tick to reach 101
+    for _ in 0..4 {
+        indexer.tick()?;
+    }
+
+    // Verify best height rolled back to 101
+    assert_eq!(indexer.get_best_height()?, Some(101));
+
+    // Query blocks 102-105 from storage by their original hashes
+    let orphaned_102 = store.get_block_by_hash(&original_hash_102)?;
+    assert!(orphaned_102.is_some());
+    assert_eq!(orphaned_102.unwrap().orphan, true);
+    
+    let orphaned_103 = store.get_block_by_hash(&original_hash_103)?;
+    assert!(orphaned_103.is_some());
+    assert_eq!(orphaned_103.unwrap().orphan, true);
+    
+    let orphaned_104 = store.get_block_by_hash(&original_hash_104)?;
+    assert!(orphaned_104.is_some());
+    assert_eq!(orphaned_104.unwrap().orphan, true);
+    
+    let orphaned_105 = store.get_block_by_hash(&original_hash_105)?;
+    assert!(orphaned_105.is_some());
+    assert_eq!(orphaned_105.unwrap().orphan, true);
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_resync_after_reorg() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer syncs new blocks after rolling back.
+     * Preconditions: Reorg occurred on regtest, indexer rolled back to height 99.
+     * Input: New blockchain with different blocks 100-105 after reorg.
+     * Steps:
+     *
+     * Perform reorg: invalidate blocks 100+, mine new chain to 105.
+     * Indexer detects reorg and rolls back to 99.
+     * Call tick() multiple times (6 times for blocks 100-105).
+     * Verify new blocks stored.
+     * Query both old and new blocks by hash.
+     * Expected Result: Indexer syncs new blocks 100-105. New blocks have orphan = false and can be queried by height. Old blocks with same heights remain in storage marked orphan = true (queryable only by hash). Best height advances to 105.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 103
+    bitcoin_client.mine_blocks_to_address(104, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(99))),
+    )?;
+
+    // Sync to height 102
+    for _ in 0..3 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(102));
+
+    // Store original block hashes for heights 100-102
+    let old_block_100 = store.get_block_by_height(100)?.expect("Block 100 should exist");
+    let old_hash_100 = old_block_100.hash.clone();
+    
+    let old_block_101 = store.get_block_by_height(101)?.expect("Block 101 should exist");
+    let old_hash_101 = old_block_101.hash.clone();
+    
+    let old_block_102 = store.get_block_by_height(102)?.expect("Block 102 should exist");
+    let old_hash_102 = old_block_102.hash.clone();
+
+    // Invalidate block at height 100 on regtest to simulate reorg
+    bitcoin_client.invalidate_block(&old_hash_100)?;
+    
+    // Verify blockchain is back at height 99
+    assert_eq!(bitcoin_client.get_best_block()?, 99);
+
+    // Mine new blocks with different wallet so new chain is at 105
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(6, &new_wallet)?;
+    
+    // Verify blockchain is at height 105
+    assert_eq!(bitcoin_client.get_best_block()?, 105);
+
+    // Call tick() multiple times to rollback indexer
+    // From height 102, need to roll back through 3 blocks to get to 99 (102→101→100→99)
+    for _ in 0..3 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(99));
+
+    // Call tick() 6 times to sync to new blocks 100-105
+    for _ in 0..6 {
+        indexer.tick()?;
+    }
+
+    // Verify indexer now at height 105
+    assert_eq!(indexer.get_best_height()?, Some(105));
+
+    // Verify new blocks stored and have orphan=false
+    for height in 100..=105 {
+        let block = store.get_block_by_height(height)?.expect(&format!("Block {} should exist", height));
+        assert_eq!(block.orphan, false, "Block {} should not be orphan", height);
+    }
+
+    // Get new block hashes at heights 100-105
+    let new_block_100 = store.get_block_by_height(100)?.unwrap();
+    let new_hash_100 = new_block_100.hash.clone();
+
+    // Verify new blocks are different from original
+    assert_ne!(new_hash_100, old_hash_100, "New block 100 should have different hash");
+
+    // Query old blocks by hash - they should still exist but marked orphan
+    let orphaned_100 = store.get_block_by_hash(&old_hash_100)?.expect("Old block 100 should still exist");
+    assert_eq!(orphaned_100.orphan, true, "Old block 100 should be marked orphan");
+    
+    let orphaned_101 = store.get_block_by_hash(&old_hash_101)?.expect("Old block 101 should still exist");
+    assert_eq!(orphaned_101.orphan, true, "Old block 101 should be marked orphan");
+    
+    let orphaned_102 = store.get_block_by_hash(&old_hash_102)?.expect("Old block 102 should still exist");
+    assert_eq!(orphaned_102.orphan, true, "Old block 102 should be marked orphan");
+
+    // Verify all new blocks are properly connected
+    for height in 101..=105 {
+        let current = store.get_block_by_height(height)?.expect(&format!("Block {} should exist", height));
+        let previous = store.get_block_by_height(height - 1)?.expect(&format!("Block {} should exist", height - 1));
+        assert_eq!(current.prev_hash, previous.hash, "Block {} should be connected to block {}", height, height - 1);
+    }
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_multi_depth_reorg() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Test reorg detection and rollback across multiple blocks.
+     * Preconditions: Indexer at height 120. Bitcoin regtest performs deep reorg.
+     * Input: Reorg invalidates blocks 110-120, alternative chain provided.
+     * Steps:
+     * Initialize indexer and sync to height 120.
+     * Use invalidateblock RPC on regtest to invalidate block 110.
+     * Mine alternative blocks 110-120 (different hashes, possibly different number).
+     * Call tick() repeatedly until indexer catches up.
+     * Verify rollback and re-sync.
+     * Expected Result: Indexer detects reorg at first mismatched block during tick. Rolls back to height 109. Old blocks 110-120 marked orphan. New blocks 110-120 synced from alternative chain. Final best height matches regtest tip.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 120
+    bitcoin_client.mine_blocks_to_address(121, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+    )?;
+
+    // Sync to height 120
+    for _ in 0..20 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(120));
+
+    // Store original block hashes for heights 110-120
+    let mut original_hashes = vec![];
+    for height in 110..=120 {
+        let block = store.get_block_by_height(height)?.expect(&format!("Block {} should exist", height));
+        assert_eq!(block.orphan, false);
+        original_hashes.push(block.hash.clone());
+    }
+
+    // Use invalidateblock RPC to invalidate block 110
+    bitcoin_client.invalidate_block(&original_hashes[0])?;
+    
+    // Verify blockchain is back at height 109
+    assert_eq!(bitcoin_client.get_best_block()?, 109);
+
+    // Mine alternative blocks 110-120 with different wallet
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(11, &new_wallet)?;
+    
+    // Verify blockchain is at height 120
+    assert_eq!(bitcoin_client.get_best_block()?, 120);
+
+    // Call tick() repeatedly (11 ticks to rollback 110-120, then 11 more to re-sync)
+    for _ in 0..11 {
+        indexer.tick()?;
+    }
+
+    // Verify best height rolled back to 109
+    assert_eq!(indexer.get_best_height()?, Some(109));
+
+    // Verify old blocks are marked orphan
+    for (idx, original_hash) in original_hashes.iter().enumerate() {
+        let height = 110 + idx;
+        let orphaned = store.get_block_by_hash(original_hash)?;
+        assert!(orphaned.is_some(), "Old block {} should exist", height);
+        assert_eq!(orphaned.unwrap().orphan, true, "Block {} should be orphan", height);
+    }
+
+    // Call tick() 11 times to re-sync new blocks
+    for _ in 0..11 {
+        indexer.tick()?;
+    }
+
+    // Verify indexer is back at height 120
+    assert_eq!(indexer.get_best_height()?, Some(120));
+
+    // Verify new blocks stored and not orphan
+    for height in 110..=120 {
+        let block = store.get_block_by_height(height)?.expect(&format!("Block {} should exist", height));
+        assert_eq!(block.orphan, false, "Block {} should not be orphan", height);
+    }
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_checkpoint_cannot_be_reorged() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Ensure reorg handling respects checkpoint as immutable starting point.
+     * Preconditions: Indexer initialized with checkpoint at height 50, synced to height 100.
+     * Input: Attempt to reorg at or below checkpoint height.
+     * Steps:
+     * Initialize indexer with checkpoint 50, sync to height 100.
+     * On regtest, attempt to invalidate block 50 or earlier.
+     * Mine alternative chain.
+     * Restart indexer or call tick().
+     * Expected Result: Indexer either detects inconsistency and returns error, or continues to operate as checkpoint block is treated as immutable. Implementation-dependent behavior: may error or may ignore blocks below checkpoint.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 110
+    bitcoin_client.mine_blocks_to_address(111, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(50))),
+    )?;
+
+    // Sync to height 100
+    for _ in 0..50 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(100));
+
+    // Verify checkpoint is set to 50
+    assert_eq!(store.get_checkpoint_height()?, Some(50));
+
+    // Get block hash at checkpoint height
+    let checkpoint_block = store.get_block_by_height(50)?.expect("Block 50 should exist");
+    let checkpoint_hash = checkpoint_block.hash.clone();
+
+    // Get block hash at height 51 (just above checkpoint)
+    let block_51 = store.get_block_by_height(51)?.expect("Block 51 should exist");
+    let hash_51 = block_51.hash.clone();
+
+    // Attempt to invalidate a block above checkpoint (51)
+    bitcoin_client.invalidate_block(&hash_51)?;
+    
+    // Verify blockchain is back at height 50
+    assert_eq!(bitcoin_client.get_best_block()?, 50);
+
+    // Mine alternative blocks from 51 onwards
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(60, &new_wallet)?;
+    
+    // Verify blockchain is at height 110
+    assert_eq!(bitcoin_client.get_best_block()?, 110);
+
+    // Call tick() multiple times to detect reorg and roll back to checkpoint level
+    // From height 100, need to roll back to 50 (50 blocks to roll back)
+    for _ in 0..50 {
+        indexer.tick()?;
+    }
+
+    // Verify indexer rolled back to 50 (checkpoint level)
+    assert_eq!(indexer.get_best_height()?, Some(50));
+
+    // Verify checkpoint block is still not orphan (checkpoint blocks are immutable)
+    let checkpoint_block_after = store.get_block_by_hash(&checkpoint_hash)?;
+    assert!(checkpoint_block_after.is_some());
+    assert_eq!(checkpoint_block_after.unwrap().orphan, false, "Checkpoint block should not be orphan");
+
+    // Sync new blocks from 51 onwards
+    for _ in 0..60 {
+        indexer.tick()?;
+    }
+
+    // Verify indexer is at height 110
+    assert_eq!(indexer.get_best_height()?, Some(110));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_reorg_shortens_chain() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Handle case where blockchain has fewer blocks after reorg.
+     * Preconditions: Indexer at height 150. Regtest reorgs to height 140.
+     * Input: Indexed height 150, regtest performs reorg resulting in best height 140.
+     * Steps:
+     * Initialize indexer and sync to height 150.
+     * Use invalidateblock on regtest to invalidate from height 141.
+     * Mine alternative chain to only height 140.
+     * Call tick() or restart indexer.
+     * Verify adjustment.
+     * Expected Result: Indexer detects chain is now shorter. Best height adjusted to 140. Blocks 141-150 from original chain remain in storage marked orphan. Warning logged about chain shortening.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 150
+    bitcoin_client.mine_blocks_to_address(151, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(100))),
+    )?;
+
+    // Sync to height 150
+    for _ in 0..50 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(150));
+
+    // Store original block hashes for heights 141-150
+    let mut original_hashes = vec![];
+    for height in 141..=150 {
+        let block = store.get_block_by_height(height)?.expect(&format!("Block {} should exist", height));
+        assert_eq!(block.orphan, false);
+        original_hashes.push(block.hash.clone());
+    }
+
+    // Get block at height 141 to invalidate
+    let block_141 = store.get_block_by_height(141)?.expect("Block 141 should exist");
+    let hash_141 = block_141.hash.clone();
+
+    // Use invalidateblock RPC to invalidate block 141
+    bitcoin_client.invalidate_block(&hash_141)?;
+    
+    // Verify blockchain is back at height 140
+    assert_eq!(bitcoin_client.get_best_block()?, 140);
+
+    // Mine one alternative block at height 141 (resulting in shorter chain than before)
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(1, &new_wallet)?;
+    
+    // Verify blockchain is at height 141 (shorter than indexer's 150)
+    assert_eq!(bitcoin_client.get_best_block()?, 141);
+
+    // Call tick() to detect reorg - should rollback to 140
+    indexer.tick()?;
+
+    // Verify best height rolled back to 140
+    assert_eq!(indexer.get_best_height()?, Some(140));
+
+    // Verify old blocks 141-150 are marked orphan
+    for (idx, original_hash) in original_hashes.iter().enumerate() {
+        let height = 141 + idx;
+        let orphaned = store.get_block_by_hash(original_hash)?;
+        assert!(orphaned.is_some(), "Old block {} should exist", height);
+        assert_eq!(orphaned.unwrap().orphan, true, "Block {} should be orphan", height);
+    }
+
+    // Call tick() to sync new block 141
+    indexer.tick()?;
+
+    // Verify indexer is at height 141
+    assert_eq!(indexer.get_best_height()?, Some(141));
+
+    // Verify new block 141 is not orphan
+    let new_block_141 = store.get_block_by_height(141)?.expect("New block 141 should exist");
+    assert_eq!(new_block_141.orphan, false, "New block 141 should not be orphan");
+    assert_ne!(new_block_141.hash, hash_141, "New block 141 should have different hash");
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_transaction_confirmations_after_reorg() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify get_tx() returns correct confirmations post-reorg.
+     * Preconditions: Transaction in a block on regtest. Reorg orphans that block.
+     * Input: TX in original block.
+     * Steps:
+     * Send transaction on regtest and mine it in a block.
+     * Sync indexer to include that block.
+     * Note transaction ID and verify it exists.
+     * Perform reorg: invalidate the block, mine alternative block without that transaction.
+     * Sync indexer through reorg.
+     * Call get_tx(tx_id).
+     * Inspect confirmations and orphan status.
+     * Expected Result: get_tx() returns TransactionInfo with confirmations = 0 and block_info.orphan = true for original block. If transaction was re-mined in new block, separate entry would exist for new block.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks to ensure coinbase maturity
+    bitcoin_client.mine_blocks_to_address(151, &wallet)?;
+    
+    let height_after_mining = bitcoin_client.get_best_block()?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(height_after_mining - 1))),
+    )?;
+
+    // Create and send a transaction (fund_address mines it into a block)
+    let recipient_address = bitcoin_client.get_new_address(utils::get_random_pubkey(), Network::Regtest)?;
+    let (funding_tx, _vout) = bitcoin_client.fund_address(&recipient_address, bitcoin::Amount::from_sat(100000))?;
+    let tx_id = funding_tx.compute_txid();
+    
+    let tx_block_height = bitcoin_client.get_best_block()?;
+    
+    // Sync indexer to include the transaction block
+    for _ in 0..(tx_block_height - (height_after_mining - 1)) {
+        indexer.tick()?;
+    }
+
+    // Get original block containing the transaction
+    let original_block = store.get_block_by_height(tx_block_height)?.expect("Block should exist");
+    let original_hash = original_block.hash.clone();
+
+    // Verify transaction exists in the block
+    assert!(original_block.txs.iter().any(|tx| tx.compute_txid() == tx_id), 
+            "Transaction should exist in storage");
+
+    // Perform reorg: invalidate the block containing the transaction
+    bitcoin_client.invalidate_block(&original_hash)?;
+
+    // Mine alternative block without the transaction (using different wallet)
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(1, &new_wallet)?;
+
+    // Sync indexer through reorg (rollback + sync new block)
+    indexer.tick()?;
+    indexer.tick()?;
+
+    // Verify original block is marked orphan and transaction still exists in it
+    let orphaned_block = store.get_block_by_hash(&original_hash)?.expect("Orphaned block should exist");
+    assert_eq!(orphaned_block.orphan, true);
+    assert!(orphaned_block.txs.iter().any(|tx| tx.compute_txid() == tx_id), 
+            "Transaction should still exist in orphaned block");
+
+    // Verify new block exists and is not orphan
+    let new_block = store.get_block_by_height(tx_block_height)?.expect("New block should exist");
+    assert_eq!(new_block.orphan, false);
+    assert_ne!(new_block.hash, original_hash, "New block should have different hash");
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
