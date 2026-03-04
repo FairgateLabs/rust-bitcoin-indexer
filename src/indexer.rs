@@ -48,7 +48,13 @@ pub trait IndexerApi {
     /// Retrieves transaction information for a given transaction ID.
     /// Returns `Ok(TransactionInfo)` with the transaction status, or an `IndexerError` if an error occurs.
     /// If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
-    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionStatus, IndexerError>;
+    /// If `search_in_mempool` is true, the transaction will be searched in the mempool if it is not found in the indexed chain.
+    /// If `search_in_mempool` is false, the transaction will only be searched in the indexed chain.
+    fn get_transaction(
+        &self,
+        tx_id: &Txid,
+        search_in_mempool: bool,
+    ) -> Result<TransactionStatus, IndexerError>;
 
     /// Retrieves the estimated fee rate from the most recently indexed block.
     /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
@@ -208,13 +214,17 @@ where
         Ok(self.store.get_best_block()?)
     }
 
-    fn get_transaction(&self, tx_id: &Txid) -> Result<TransactionStatus, IndexerError> {
+    fn get_transaction(
+        &self,
+        tx_id: &Txid,
+        search_in_mempool: bool,
+    ) -> Result<TransactionStatus, IndexerError> {
         // First, check if transaction is in storage
         let tx_status = self.store.get_tx_info(tx_id)?;
 
         if let Some(mut tx_info) = tx_status {
             // Update status based on confirmations and threshold
-            if tx_info.is_orphan() {
+            if tx_info.is_orphan() && search_in_mempool {
                 // If transaction is orphan, check if it's in mempool
                 let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
 
@@ -228,6 +238,15 @@ where
 
             Ok(tx_info)
         } else {
+            if !search_in_mempool {
+                return Ok(TransactionStatus {
+                    tx: None,
+                    block_info: None,
+                    confirmations: 0,
+                    status: TransactionBlockchainStatus::NotFound,
+                });
+            }
+
             // Transaction not found in storage, check mempool
             let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
             let status = if tx_mempool_status.is_ok() {

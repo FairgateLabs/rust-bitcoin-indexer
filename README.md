@@ -78,7 +78,7 @@ The `IndexerApi` trait provides several methods to interact with the Bitcoin Ind
 
   // Example transaction ID (replace with a real one for actual use)
   let tx_id = "some_tx_id";
-  let tx_info = indexer.get_transaction(&tx_id.parse()?)?;
+  let tx_info = indexer.get_transaction(&tx_id.parse()?, false)?;
   println!("Transaction status: {:?}", tx_info.status);
   match tx_info.status {
       TransactionBlockchainStatus::InMempool => {
