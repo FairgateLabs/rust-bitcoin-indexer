@@ -1447,7 +1447,7 @@ fn test_checkpoint_cannot_be_reorged() -> Result<(), anyhow::Error> {
     /*
      * Objective: Ensure reorg handling respects checkpoint as immutable starting point.
      * Preconditions: Indexer initialized with checkpoint at height 50, synced to height 100.
-     * Input: Attempt to reorg at or below checkpoint height.
+     * Input: Attempt to Attempt to reorg above checkpoint height and verify rollback stops at checkpoint.
      * Steps:
      * Initialize indexer with checkpoint 50, sync to height 100.
      * On regtest, attempt to invalidate block 50 or earlier.
@@ -1533,6 +1533,105 @@ fn test_checkpoint_cannot_be_reorged() -> Result<(), anyhow::Error> {
 
     // Verify indexer is at height 110
     assert_eq!(indexer.get_best_height()?, Some(110));
+
+    bitcoind.stop()?;
+    clear_output();
+    Ok(())
+}
+
+#[test]
+fn test_invalidating_checkpoint_block_detected() -> Result<(), anyhow::Error> {
+    /*
+     * Objective: Verify indexer detects critical inconsistency when checkpoint block itself is invalidated.
+     * Preconditions: Indexer initialized with checkpoint at height 50, synced to height 100.
+     * Input: Directly invalidate the checkpoint block (block 50) on the node.
+     * Steps:
+     * Initialize indexer with checkpoint 50, sync to height 100.
+     * On regtest, invalidate block 50 (the checkpoint itself).
+     * Mine alternative chain from height 50.
+     * Attempt to tick() the indexer.
+     * Expected Result: Indexer detects that checkpoint block no longer exists in the active chain.
+     * This represents a critical inconsistency and should either:
+     * - Return an error on tick()
+     * - Detect the checkpoint hash mismatch and fail
+     * The checkpoint is meant to be immutable; invalidating it should cause the indexer to fail.
+     */
+    
+    clear_output();
+    
+    let config = settings::load::<IndexerConfig>()?;
+    let bitcoind_config = bitcoind::config::BitcoindConfig::default();
+    let bitcoind = Bitcoind::new(
+        bitcoind_config,
+        config.bitcoin.clone(),
+        None,
+    );
+    bitcoind.start()?;
+
+    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let wallet = bitcoin_client.init_wallet("test_wallet")?;
+    let store = get_indexer_store();
+
+    // Mine initial blocks up to height 110
+    bitcoin_client.mine_blocks_to_address(111, &wallet)?;
+
+    let bitcoin_client2 = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let indexer = Indexer::new(
+        bitcoin_client2,
+        store.clone(),
+        Some(IndexerSettings::new(Some(50))),
+    )?;
+
+    // Sync to height 100
+    for _ in 0..50 {
+        indexer.tick()?;
+    }
+    assert_eq!(indexer.get_best_height()?, Some(100));
+
+    // Verify checkpoint is set to 50
+    assert_eq!(store.get_checkpoint_height()?, Some(50));
+
+    // Get block hash at checkpoint height (block 50)
+    let checkpoint_block = store.get_block_by_height(50)?.expect("Block 50 should exist");
+    let checkpoint_hash = checkpoint_block.hash.clone();
+
+    // AGGRESSIVE TEST: Directly invalidate the checkpoint block itself (block 50)
+    bitcoin_client.invalidate_block(&checkpoint_hash)?;
+    
+    // Verify blockchain rolled back to height 49
+    assert_eq!(bitcoin_client.get_best_block()?, 49);
+
+    // Mine alternative chain from 50 onwards (creating a different block 50)
+    let user_pubkey = utils::get_random_pubkey();
+    let new_wallet = bitcoin_client.get_new_address(user_pubkey, Network::Regtest)?;
+    bitcoin_client.mine_blocks_to_address(61, &new_wallet)?;
+    
+    // Verify blockchain is at height 110
+    assert_eq!(bitcoin_client.get_best_block()?, 110);
+
+    // Verify that the new block 50 has a different hash than the checkpoint
+    let new_block_50_hash = bitcoin_client.get_block_by_height(&50)?.unwrap().hash;
+    assert_ne!(new_block_50_hash, checkpoint_hash, 
+               "New block 50 should have different hash than checkpoint");
+
+    // Attempt to tick() - this should detect the checkpoint inconsistency
+    // The indexer should detect that block at height 50 on the node
+    // does not match the checkpoint hash it has stored
+    let tick_result = indexer.tick();
+    
+    // The indexer should either:
+    // 1. Return an error immediately
+    // 2. Detect inconsistency during validation
+    // We expect this to fail because the checkpoint block has been replaced
+    assert!(tick_result.is_err(), 
+            "Indexer should detect error when checkpoint block is invalidated");
+    
+    // Verify the error is related to checkpoint inconsistency
+    let error = tick_result.unwrap_err();
+    let error_str = format!("{:?}", error);
+    // The error should indicate some kind of inconsistency or checkpoint validation failure
+    // (Exact error type depends on implementation)
+    println!("Expected error detected: {}", error_str);
 
     bitcoind.stop()?;
     clear_output();
@@ -1705,6 +1804,14 @@ fn test_transaction_confirmations_after_reorg() -> Result<(), anyhow::Error> {
     assert!(original_block.txs.iter().any(|tx| tx.compute_txid() == tx_id), 
             "Transaction should exist in storage");
 
+    // Test get_tx() BEFORE reorg - transaction should be in active chain with confirmations
+    let tx_info_before = indexer.get_tx(&tx_id)?.expect("Transaction should be found");
+    assert_eq!(tx_info_before.tx.compute_txid(), tx_id);
+    assert_eq!(tx_info_before.block_info.orphan, false, "Block should not be orphan before reorg");
+    assert_eq!(tx_info_before.block_info.hash, original_hash);
+    assert_eq!(tx_info_before.block_info.height, tx_block_height);
+    assert_eq!(tx_info_before.confirmations, 1, "Transaction should have 1 confirmation");
+
     // Perform reorg: invalidate the block containing the transaction
     bitcoin_client.invalidate_block(&original_hash)?;
 
@@ -1727,6 +1834,14 @@ fn test_transaction_confirmations_after_reorg() -> Result<(), anyhow::Error> {
     let new_block = store.get_block_by_height(tx_block_height)?.expect("New block should exist");
     assert_eq!(new_block.orphan, false);
     assert_ne!(new_block.hash, original_hash, "New block should have different hash");
+
+    // Test get_tx() AFTER reorg - transaction should be in orphaned block with 0 confirmations
+    let tx_info_after = indexer.get_tx(&tx_id)?.expect("Transaction should still be found");
+    assert_eq!(tx_info_after.tx.compute_txid(), tx_id);
+    assert_eq!(tx_info_after.block_info.orphan, true, "Block should be orphan after reorg");
+    assert_eq!(tx_info_after.block_info.hash, original_hash, "Should reference original orphaned block");
+    assert_eq!(tx_info_after.block_info.height, tx_block_height);
+    assert_eq!(tx_info_after.confirmations, 0, "Transaction in orphaned block should have 0 confirmations");
 
     bitcoind.stop()?;
     clear_output();
