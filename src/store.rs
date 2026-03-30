@@ -154,20 +154,20 @@ impl StoreClient for IndexerStore {
         height: BlockHeight,
     ) -> Result<Option<BlockHash>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BlockByHeight(height));
-        let block_hash: Option<BlockHash> = self.store.get(key)?;
+        let block_hash: Option<BlockHash> = self.store.get(key, None)?;
         Ok(block_hash)
     }
 
     // Retrieve the block by its hash.
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BlockByHash(*hash));
-        let block: Option<FullBlock> = self.store.get(key)?;
+        let block: Option<FullBlock> = self.store.get(key, None)?;
         Ok(block)
     }
 
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
-        let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key)?;
+        let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key, None)?;
 
         if let Some((tx, block_hash)) = tx_data {
             let block_info = match self.get_block_by_hash(&block_hash)? {
@@ -217,7 +217,7 @@ impl StoreClient for IndexerStore {
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
         let key = self.get_key(StoreKey::BestBlock);
-        let height: Option<BlockHeight> = self.store.get(key)?;
+        let height: Option<BlockHeight> = self.store.get(key, None)?;
         Ok(height)
     }
 
@@ -250,7 +250,7 @@ impl StoreClient for IndexerStore {
 
     fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
         let key = self.get_key(StoreKey::CheckpointHeight);
-        let height = self.store.get(key)?;
+        let height = self.store.get(key, None)?;
         Ok(height)
     }
 
