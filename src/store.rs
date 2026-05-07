@@ -167,7 +167,9 @@ impl StoreClient for IndexerStore {
 
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError> {
         let key = self.get_key(StoreKey::TransactionById(*tx_id));
-        let tx_data = self.store.get::<&str, (Transaction, BlockHash)>(&key, None)?;
+        let tx_data = self
+            .store
+            .get::<&str, (Transaction, BlockHash)>(&key, None)?;
 
         if let Some((tx, block_hash)) = tx_data {
             let block_info = match self.get_block_by_hash(&block_hash)? {

@@ -249,10 +249,19 @@ where
 
             // Transaction not found in storage, check mempool
             let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
-            let status = if tx_mempool_status.is_ok() {
-                TransactionBlockchainStatus::InMempool
-            } else {
-                TransactionBlockchainStatus::NotFound
+
+            let status = match tx_mempool_status {
+                Ok(_) => TransactionBlockchainStatus::InMempool,
+                Err(e) => {
+                    let err_str = format!("{:?}", e);
+
+                    if err_str.contains("Unsupported method") {
+                        // TODO: Alchemy doesn't support getmempoolentry → assume it's in mempool
+                        TransactionBlockchainStatus::InMempool
+                    } else {
+                        TransactionBlockchainStatus::NotFound
+                    }
+                }
             };
 
             Ok(TransactionStatus {

@@ -42,7 +42,6 @@ impl TransactionStatus {
         // - The status is Finalized
         // - The number of confirmations meets or exceeds the confirmation threshold
         self.confirmations >= max_monitoring_confirmations
-            && self.status == TransactionBlockchainStatus::Finalized
     }
 
     pub fn is_confirmed(&self) -> bool {
