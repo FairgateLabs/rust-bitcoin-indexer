@@ -75,8 +75,13 @@ fn test_get_transaction_lifecycle() -> Result<(), anyhow::Error> {
 
     info!("Transaction {} sent to mempool", txid);
 
-    // Step 4: Check that the transaction is in mempool
+    // Step 4: Register the txid in the indexer's mempool watch list so the next tick
+    // refreshes its mempool status, then verify it shows up as InMempool.
+    info!("Registering the txid in the watch list");
+    indexer.add_mempool_watch(txid)?;
+
     info!("Checking that get_transaction returns InMempool status");
+    indexer.tick()?; // Tick to update mempool status
     let tx_info = indexer.get_transaction(&txid, true)?;
     assert_eq!(tx_info.status, TransactionBlockchainStatus::InMempool);
     assert_eq!(tx_info.confirmations, 0);

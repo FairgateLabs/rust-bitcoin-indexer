@@ -20,6 +20,8 @@ enum StoreKey {
     BlockTxsByHash(BlockHash),
     BestBlock,
     CheckpointHeight,
+    MempoolWatchList,
+    MempoolCache,
 }
 
 impl IndexerStore {
@@ -38,6 +40,8 @@ impl IndexerStore {
             StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
             StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
             StoreKey::CheckpointHeight => format!("{prefix}/meta/checkpoint_height"),
+            StoreKey::MempoolWatchList => format!("{prefix}/mempool/watch"),
+            StoreKey::MempoolCache => format!("{prefix}/mempool/cache"),
         }
     }
 }
@@ -59,6 +63,13 @@ pub trait StoreClient {
         estimated_fee_rate: u64,
     ) -> Result<(), IndexerStoreError>;
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError>;
+
+    fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError>;
+    fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError>;
+    fn get_mempool_watch_list(&self) -> Result<Vec<Txid>, IndexerStoreError>;
+    fn is_in_mempool_watch(&self, txid: &Txid) -> Result<bool, IndexerStoreError>;
+    fn update_mempool_cache(&self, txids: Vec<Txid>) -> Result<(), IndexerStoreError>;
+    fn is_in_mempool_cache(&self, txid: &Txid) -> Result<bool, IndexerStoreError>;
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
@@ -201,6 +212,45 @@ impl StoreClient for IndexerStore {
         } else {
             Ok(None)
         }
+    }
+
+    fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::MempoolWatchList);
+        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
+        if !list.contains(&txid) {
+            list.push(txid);
+            self.store.set(key, list, None)?;
+        }
+        Ok(())
+    }
+
+    fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::MempoolWatchList);
+        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
+        list.retain(|t| t != txid);
+        self.store.set(key, list, None)?;
+        Ok(())
+    }
+
+    fn get_mempool_watch_list(&self) -> Result<Vec<Txid>, IndexerStoreError> {
+        let key = self.get_key(StoreKey::MempoolWatchList);
+        Ok(self.store.get(key, None)?.unwrap_or_default())
+    }
+
+    fn is_in_mempool_watch(&self, txid: &Txid) -> Result<bool, IndexerStoreError> {
+        Ok(self.get_mempool_watch_list()?.contains(txid))
+    }
+
+    fn update_mempool_cache(&self, txids: Vec<Txid>) -> Result<(), IndexerStoreError> {
+        let key = self.get_key(StoreKey::MempoolCache);
+        self.store.set(key, txids, None)?;
+        Ok(())
+    }
+
+    fn is_in_mempool_cache(&self, txid: &Txid) -> Result<bool, IndexerStoreError> {
+        let key = self.get_key(StoreKey::MempoolCache);
+        let list: Vec<Txid> = self.store.get(key, None)?.unwrap_or_default();
+        Ok(list.contains(txid))
     }
 
     fn get_block_by_height(

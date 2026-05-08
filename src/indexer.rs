@@ -45,6 +45,14 @@ pub trait IndexerApi {
     // Retrieves a block by its hash.
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError>;
 
+    /// Register a txid to be polled in the mempool during each `tick()`.
+    fn add_mempool_watch(&self, txid: Txid) -> Result<(), IndexerError>;
+
+    /// Remove a txid from the mempool watch list.
+    fn remove_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerError>;
+
+    fn refresh_mempool_cache(&self) -> Result<(), IndexerError>;
+
     /// Retrieves transaction information for a given transaction ID.
     /// Returns `Ok(TransactionInfo)` with the transaction status, or an `IndexerError` if an error occurs.
     /// If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
@@ -223,13 +231,17 @@ where
         let tx_status = self.store.get_tx_info(tx_id)?;
 
         if let Some(mut tx_info) = tx_status {
-            // Update status based on confirmations and threshold
+            // Orphan transactions: cache and watch list together encode the post-reorg
+            // mempool status, populated by tick() when a reorg is detected.
+            //   - in cache              → tx is back in mempool (InMempool)
+            //   - in watch list, no cache → mempool check still pending (stay Orphan)
+            //   - neither               → cache refresh confirmed absence (NotFound)
             if tx_info.is_orphan() && search_in_mempool {
-                // If transaction is orphan, check if it's in mempool
-                let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
-
-                if tx_mempool_status.is_err() {
-                    // Transaction is not in mempool, mark as not found
+                if self.store.is_in_mempool_cache(tx_id)? {
+                    tx_info.status = TransactionBlockchainStatus::InMempool;
+                    tx_info.confirmations = 0;
+                    tx_info.block_info = None;
+                } else if !self.store.is_in_mempool_watch(tx_id)? {
                     tx_info.status = TransactionBlockchainStatus::NotFound;
                     tx_info.confirmations = 0;
                     tx_info.block_info = None;
@@ -247,30 +259,46 @@ where
                 });
             }
 
-            // Transaction not found in storage, check mempool
-            let tx_mempool_status = self.bitcoin_client.get_mempool_entry(tx_id);
-
-            let status = match tx_mempool_status {
-                Ok(_) => TransactionBlockchainStatus::InMempool,
-                Err(e) => {
-                    let err_str = format!("{:?}", e);
-
-                    if err_str.contains("Unsupported method") {
-                        // TODO: Alchemy doesn't support getmempoolentry → assume it's in mempool
-                        TransactionBlockchainStatus::InMempool
-                    } else {
-                        TransactionBlockchainStatus::NotFound
-                    }
-                }
-            };
-
+            // Transaction not found in indexed storage, check mempool cache
+            let in_mempool = self.store.is_in_mempool_cache(tx_id)?;
             Ok(TransactionStatus {
                 tx: None,
                 block_info: None,
                 confirmations: 0,
-                status,
+                status: if in_mempool {
+                    TransactionBlockchainStatus::InMempool
+                } else {
+                    TransactionBlockchainStatus::NotFound
+                },
             })
         }
+    }
+
+    fn refresh_mempool_cache(&self) -> Result<(), IndexerError> {
+        let watch_list = self.store.get_mempool_watch_list()?;
+        let mut new_cache: Vec<Txid> = Vec::new();
+        for txid in watch_list {
+            match self.store.get_tx_info(&txid)? {
+                // Confirmed (non-orphaned): auto-remove from watch list, no mempool check needed.
+                Some(info) if !info.is_orphan() => {
+                    self.store.remove_from_mempool_watch(&txid)?;
+                }
+                // Not in storage or orphaned: check mempool.
+                other => {
+                    let is_orphaned = other.map(|t| t.is_orphan()).unwrap_or(false);
+                    if self.bitcoin_client.check_in_mempool(&txid) {
+                        new_cache.push(txid);
+                    } else if is_orphaned {
+                        // Orphaned + not in mempool → remove from watch list.
+                        // Next get_transaction call will return NotFound.
+                        self.store.remove_from_mempool_watch(&txid)?;
+                    }
+                    // Unconfirmed (not orphaned) + not in mempool: keep in watch list.
+                }
+            }
+        }
+        self.store.update_mempool_cache(new_cache)?;
+        Ok(())
     }
 
     fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
@@ -331,6 +359,11 @@ where
             self.store
                 .mark_following_blocks_as_orphan(new_blockchain_block.height)?;
 
+            // Re-enroll txids from the orphaned block so the cache refresh can check them.
+            for tx in &indexer_block.txs {
+                self.store.add_to_mempool_watch(tx.compute_txid())?;
+            }
+
             // Roll back to the previous block.
             let previous_blockchain_height = current_height.saturating_sub(1);
             self.store.save_best_height(previous_blockchain_height)?;
@@ -340,14 +373,17 @@ where
                 previous_blockchain_height
             );
 
+            self.refresh_mempool_cache()?;
             return Ok(());
         }
 
         // --- NORMAL SYNC PATH ---
 
-        // If the indexer is already caught up with the blockchain, do nothing.
+        // If the indexer is already caught up with the blockchain, just refresh the
+        // mempool cache so that mempool changes are picked up between blocks
         if best_indexer_height == best_blockchain_height {
             info!("Indexer is up to date");
+            self.refresh_mempool_cache()?;
             return Ok(());
         }
 
@@ -360,7 +396,18 @@ where
             self.store
                 .mark_following_blocks_as_orphan(best_blockchain_height + 1)?;
 
+            // Re-enroll txids from every orphaned block so the cache refresh can verify
+            // whether they are still live in the mempool, evicted, or now NotFound.
+            for height in (best_blockchain_height + 1)..=best_indexer_height {
+                if let Some(block) = self.store.get_block_by_height(height)? {
+                    for tx in &block.txs {
+                        self.store.add_to_mempool_watch(tx.compute_txid())?;
+                    }
+                }
+            }
+
             self.store.save_best_height(best_blockchain_height)?;
+            self.refresh_mempool_cache()?;
             return Ok(());
         }
 
@@ -383,7 +430,8 @@ where
         // Save the next block to the local store.
         self.store
             .save_new_best_block(&next_block, estimated_fee_rate)?;
-        // Update the last synced height to reflect the new block.
+
+        self.refresh_mempool_cache()?;
 
         Ok(())
     }
@@ -396,6 +444,16 @@ where
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError> {
         let block = self.store.get_block_by_hash(hash)?;
         Ok(block)
+    }
+
+    fn add_mempool_watch(&self, txid: Txid) -> Result<(), IndexerError> {
+        self.store.add_to_mempool_watch(txid)?;
+        Ok(())
+    }
+
+    fn remove_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerError> {
+        self.store.remove_from_mempool_watch(txid)?;
+        Ok(())
     }
 }
 
