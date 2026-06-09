@@ -67,6 +67,11 @@ pub trait IndexerApi {
     /// Retrieves the estimated fee rate from the most recently indexed block.
     /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
     fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError>;
+
+    /// Real-time RPC check for UTXO spendability. Bypasses indexer cache and
+    /// calls `gettxout(txid, vout, include_mempool=true)` directly. Returns
+    /// true iff the UTXO is unspent (in chain or mempool).
+    fn is_utxo_unspent_rpc(&self, txid: &Txid, vout: u32) -> Result<bool, IndexerError>;
 }
 
 impl<B> Indexer<B>
@@ -320,6 +325,10 @@ where
         } else {
             Err(IndexerError::FeeRateNotEstimated)
         }
+    }
+
+    fn is_utxo_unspent_rpc(&self, txid: &Txid, vout: u32) -> Result<bool, IndexerError> {
+        Ok(self.bitcoin_client.is_utxo_unspent(txid, vout)?)
     }
 
     fn tick(&self) -> Result<(), IndexerError> {
