@@ -64,6 +64,8 @@ const NEXT_BLOCK_HEIGHT: BlockHeight = 4_977_629;
 const PREV_HASH: &str = "0000000000000000000a1e2b6f1f3b7f0a1f1e2b6f1f3b7f0a1f1e2b6f1f3b7f";
 const PREV_BLOCK_HASH: &str = "0000000000000000000b1e2b6f1f3b7f0b1f1e2b6f1f3b7f0b1f1e2b6f1f3b7f";
 const NEXT_BLOCK_HASH: &str = "0000000000000000000c1e2b6f1f3b7f0c1f1e2b6f1f3b7f0c1f1e2b6f1f3b7f";
+const GENESIS_HASH: &str = "0000000000000000000d1e2b6f1f3b7f0d1f1e2b6f1f3b7f0d1f1e2b6f1f3b7f";
+const ZERO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 fn block(height: BlockHeight, hash: &str, prev_hash: &str) -> BlockInfo {
     BlockInfo {
@@ -167,5 +169,59 @@ fn cursor_stuck_after_crash_during_save() -> Result<(), anyhow::Error> {
     }
 
     clear_output();
+    Ok(())
+}
+
+/// Edge case: the genesis block (height 0) is already stored but the cursor is
+/// unset (None), which can happen if a crash interrupts the very first save
+/// between the block write and the cursor write. Re-saving it must advance the
+/// cursor to 0. Comparing best height as `unwrap_or(0)` missed this, because
+/// 0 > 0 is false; comparing the Option directly (None < Some(0)) handles it.
+#[test]
+fn cursor_advances_from_unset_for_genesis_block() -> Result<(), anyhow::Error> {
+    use bitcoin_indexer::store::IndexerStore;
+    use std::rc::Rc;
+    use storage_backend::storage::{KeyValueStore, Storage};
+    use storage_backend::storage_config::StorageConfig;
+
+    // Use a private temp dir so this test never disturbs the shared test_output
+    // directory used by the other tests in this binary.
+    let dir = std::env::temp_dir().join(format!(
+        "indexer_genesis_cursor_{}",
+        crate::utils::generate_random_string()
+    ));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.to_string_lossy().replace('\\', "/");
+
+    let storage = Rc::new(Storage::new(&StorageConfig::new(path, None))?);
+    let store = IndexerStore::new(storage.clone())?;
+
+    let genesis = block(0, GENESIS_HASH, ZERO_HASH);
+
+    // Store genesis normally; the full save path also sets the cursor to 0.
+    store.save_new_best_block(&genesis, 0)?;
+
+    // Simulate a crash that wrote the block but not the cursor: clear the
+    // best-height key directly. This key mirrors StoreKey::BestBlock in store.rs.
+    storage.remove("indexer/meta/best_block_height", None)?;
+    assert_eq!(
+        store.get_best_height()?,
+        None,
+        "setup: genesis stored but the best-height cursor is unset"
+    );
+
+    // Re-saving the already-stored genesis hits the early-return branch, which
+    // must set the cursor to 0 even though it is currently None.
+    store.save_new_best_block(&genesis, 0)?;
+    assert_eq!(
+        store.get_best_height()?,
+        Some(0),
+        "an unset cursor must advance to the stored genesis height 0; unwrap_or(0) \
+         would leave it unset because 0 > 0 is false"
+    );
+
+    drop(store);
+    drop(storage);
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
