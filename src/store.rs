@@ -95,11 +95,13 @@ impl StoreClient for IndexerStore {
                 }
                 // Advance the cursor only when this block is ahead of it, so
                 // tick() does not loop forever re-saving the same already-stored
-                // block. Never move it backward: save_new_best_block can be
-                // called with an older block (for example re-checking a lower
-                // height), and lowering the best height would corrupt the cursor.
-                let current_best = self.get_best_height()?.unwrap_or(0);
-                if block.height > current_best {
+                // block. Compare the Option directly: this also advances from an
+                // unset cursor (None < Some(h)), including the genesis block at
+                // height 0, which unwrap_or(0) would miss since 0 > 0 is false.
+                // It never lowers the cursor, because save_new_best_block can be
+                // called with an older block and regressing the height would
+                // corrupt the cursor.
+                if self.get_best_height()? < Some(block.height) {
                     self.save_best_height(block.height)?;
                 }
                 return Ok(());
