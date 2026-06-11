@@ -85,6 +85,23 @@ impl StoreClient for IndexerStore {
 
             if saved_block.hash == block.hash {
                 warn!("Block already saved at height {}", block.height);
+                // The block is on the canonical chain at this height. If a prior
+                // reorg marked it orphan and the chain re-converged, clear that
+                // stale flag so confirmation counting stays correct.
+                if saved_block.orphan {
+                    saved_block.orphan = false;
+                    let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
+                    self.store.set(key, saved_block, None)?;
+                }
+                // Advance the cursor only when this block is ahead of it, so
+                // tick() does not loop forever re-saving the same already-stored
+                // block. Never move it backward: save_new_best_block can be
+                // called with an older block (for example re-checking a lower
+                // height), and lowering the best height would corrupt the cursor.
+                let current_best = self.get_best_height()?.unwrap_or(0);
+                if block.height > current_best {
+                    self.save_best_height(block.height)?;
+                }
                 return Ok(());
             }
 
