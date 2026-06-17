@@ -68,10 +68,18 @@ pub trait IndexerApi {
     /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
     fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError>;
 
-    /// Real-time RPC check for UTXO spendability. Bypasses indexer cache and
-    /// calls `gettxout(txid, vout, include_mempool=true)` directly. Returns
-    /// true iff the UTXO is unspent (in chain or mempool).
-    fn is_utxo_unspent_rpc(&self, txid: &Txid, vout: u32) -> Result<bool, IndexerError>;
+    /// Real-time RPC check for UTXO spendability. Bypasses indexer cache. Returns true iff the UTXO is unspent
+    /// (in chain OR mempool when `include_mempool` is true, chain-only when false).
+    fn is_utxo_unspent_rpc(
+        &self,
+        txid: &Txid,
+        vout: u32,
+        include_mempool: bool,
+    ) -> Result<bool, IndexerError>;
+
+    /// Live `getrawtransaction` confirmation probe (requires `-txindex`). Returns `None` if the node
+    /// does not know the tx, `Some(0)` if in the mempool, `Some(n>=1)` if confirmed with `n` confs.
+    fn get_tx_confirmations(&self, txid: &Txid) -> Result<Option<u32>, IndexerError>;
 }
 
 impl<B> Indexer<B>
@@ -327,8 +335,19 @@ where
         }
     }
 
-    fn is_utxo_unspent_rpc(&self, txid: &Txid, vout: u32) -> Result<bool, IndexerError> {
-        Ok(self.bitcoin_client.is_utxo_unspent(txid, vout)?)
+    fn is_utxo_unspent_rpc(
+        &self,
+        txid: &Txid,
+        vout: u32,
+        include_mempool: bool,
+    ) -> Result<bool, IndexerError> {
+        Ok(self
+            .bitcoin_client
+            .is_utxo_unspent(txid, vout, include_mempool)?)
+    }
+
+    fn get_tx_confirmations(&self, txid: &Txid) -> Result<Option<u32>, IndexerError> {
+        Ok(self.bitcoin_client.get_tx_confirmations(txid)?)
     }
 
     fn tick(&self) -> Result<(), IndexerError> {
