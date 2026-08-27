@@ -18,6 +18,7 @@ pub fn generate_random_string() -> String {
 
 /// Wait for port 18443 to become available after Docker cleanup
 /// Returns true if port is available, false if timeout reached
+#[allow(dead_code)]
 pub fn wait_for_port_available(timeout_secs: u64) -> bool {
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
@@ -49,7 +50,7 @@ pub fn get_indexer_store() -> Rc<IndexerStore> {
         loop {
             match std::fs::create_dir_all(&absolute_path) {
                 Ok(_) => break,
-                Err(e) if attempts < MAX_ATTEMPTS - 1 => {
+                Err(_e) if attempts < MAX_ATTEMPTS - 1 => {
                     attempts += 1;
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
@@ -115,6 +116,7 @@ pub fn clear_output() {
     }
 }
 
+#[allow(dead_code)]
 pub fn get_random_pubkey() -> PublicKey {
     let secp = secp256k1::Secp256k1::new();
     let mut rng = OsRng;
