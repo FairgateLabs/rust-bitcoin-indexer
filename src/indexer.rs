@@ -141,11 +141,11 @@ where
                         Some(checkpoint) => {
                             let existing_checkpoint = store.get_checkpoint_height()?;
 
-                            if existing_checkpoint.is_some() {
-                                if existing_checkpoint.unwrap() != checkpoint {
+                            if let Some(existing_checkpoint) = existing_checkpoint {
+                                if existing_checkpoint != checkpoint {
                                     error!(
-                                    "The checkpoint height used is different from the previously indexed one. Previously CheckpointHeight({}), New CheckpointHeight({})",
-                                        existing_checkpoint.unwrap(),
+                                        "The checkpoint height used is different from the previously indexed one. Previously CheckpointHeight({}), New CheckpointHeight({})",
+                                        existing_checkpoint,
                                         checkpoint
                                     );
 
