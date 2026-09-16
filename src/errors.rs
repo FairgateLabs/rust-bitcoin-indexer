@@ -1,37 +1,21 @@
 use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
+use bitvmx_bitcoin_rpc::types::BlockHeight;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum IndexerStoreError {
-    #[error("Error with the store client")]
-    StoreError(#[from] storage_backend::error::StorageError),
-
-    #[error("Block not found")]
-    BlockNotFound,
-}
-
-#[derive(Error, Debug)]
 pub enum IndexerError {
-    #[error("Error with the Bitcoin client")]
+    #[error("Bad configuration: {0}")]
+    InvalidConfiguration(String),
+
+    #[error("Bitcoin client error: {0}")]
     BitcoinClientError(#[from] BitcoinClientError),
 
-    #[error("Error with the store")]
-    StoreError(#[from] IndexerStoreError),
+    #[error("Storage backend error: {0}")]
+    StorageError(#[from] storage_backend::error::StorageError),
 
-    #[error("Inconsistent blockchain state")]
-    InconsistentBlockchain,
-
-    #[error("Indexed block hash does not match blockchain hash")]
-    IndexedBlockHashMismatch,
-
-    #[error("Database is corrupted")]
-    DatabaseCorrupted,
-
-    #[error("Checkpoint height is ahead of blockchain height")]
-    CheckpointHeightAheadOfBlockchainHeight,
-
-    #[error("Block not found")]
-    BlockNotFound,
+    /// A block the indexer needs is neither stored nor available from the node.
+    #[error("Block at height {0} not found")]
+    BlockNotFound(BlockHeight),
 
     #[error("Fee rate can't be estimated")]
     FeeRateNotEstimated,
@@ -39,15 +23,14 @@ pub enum IndexerError {
     #[error("Indexer is not synchronized")]
     IndexerNotSynced,
 
-    #[error("Already indexed with different checkpoint height")]
-    AlreadyIndexedWithDifferentCheckpointHeight,
-
-    #[error("Checkpoint height is behind indexed height")]
-    CheckpointHeightBehindIndexedHeight,
-
-    #[error("Missing transaction data in tx_status")]
+    #[error("Missing transaction data in the transaction status")]
     MissingTransactionData,
 
-    #[error("Missing block info in tx_status")]
-    MissingBlockInfo,
+    /// Something the indexer could not do, with no better variant for it.
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    /// Storage contradicts itself, which means a bug rather than a chain or node condition.
+    #[error("Invariant violated: {0}")]
+    InvariantViolation(String),
 }
