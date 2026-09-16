@@ -16,7 +16,7 @@ macro_rules! ensure {
 #[serde(deny_unknown_fields)] // Enforce fields.
 pub struct IndexerConfig {
     pub storage: StorageConfig,
-    pub bitcoin: RpcConfig,
+    pub rpc: RpcConfig,
 
     #[serde(default)]
     pub settings: IndexerSettings,

@@ -47,13 +47,13 @@ fn main() -> Result<(), anyhow::Error> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
+    let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
 
-    let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
+    let blockchain_height = bitcoin_client.get_tip_height()? as BlockHeight;
 
     let network = bitcoin_client.get_blockchain_info()?.chain;
     info!("Connected to chain {}", network);
-    info!("Chain best block at {}H", blockchain_height);
+    info!("Chain tip at height {}", blockchain_height);
     let storage = Rc::new(Storage::new(&config.storage)?);
     let indexer_store = Rc::new(IndexerStore::new(storage)?);
     let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), Some(config.settings))?;

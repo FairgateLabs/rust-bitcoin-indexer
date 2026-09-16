@@ -21,10 +21,10 @@ pub enum IndexerError {
     FeeRateNotEstimated,
 
     #[error("Indexer is not synchronized")]
-    IndexerNotSynced,
+    NotSynced,
 
-    #[error("Missing transaction data in the transaction status")]
-    MissingTransactionData,
+    #[error("The transaction is not confirmed")]
+    NotConfirmed,
 
     /// Something the indexer could not do, with no better variant for it.
     #[error("Internal error: {0}")]

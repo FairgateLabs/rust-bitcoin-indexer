@@ -2,7 +2,7 @@ use crate::{
     config::IndexerSettings,
     errors::IndexerError,
     helper::{
-        confirmations, estimate_fee_rate, height_to_prune, is_older_than_window, start_height,
+        confirmations, estimate_fee_rate, height_to_prune, is_below_window, window_start,
     },
     store::IndexerStore,
     types::{FullBlock, TransactionStatus},
@@ -48,30 +48,30 @@ where
             settings,
         };
 
-        let tip = indexer.bitcoin_client.get_best_block()?;
-        let start = start_height(tip, indexer.settings.retention_depth);
+        let tip = indexer.bitcoin_client.get_tip_height()?;
+        let window_start = window_start(tip, indexer.settings.retention_depth);
 
         // If a reorg that happened while this processwas down tick() is the single place that unwinds one.
         match indexer.store.get_cursor()? {
             // A fresh database has no subscriptions yet. Start one window below the tip.
             None => {
-                info!("No cursor stored, starting at height {start} (tip {tip})",);
-                indexer.index_first_block(start)?;
+                info!("No cursor stored, starting at height {window_start} (tip {tip})",);
+                indexer.index_first_block(window_start)?;
             }
             // A restart that is catching up from a stored cursor reads every block in between.
             Some(cursor) if indexer.settings.catch_up => {
                 info!("Resuming from height {cursor} (tip {tip})");
             }
             // A restart that is not catching up jumps straight to tip - retention_depth.
-            Some(cursor) if start > cursor.saturating_add(1) => {
+            Some(cursor) if window_start > cursor.saturating_add(1) => {
                 warn!(
                     "catch_up is disabled, skipping blocks {}..={}. Output pattern and spending UTXO events in that range are lost",
                     cursor.saturating_add(1),
-                    start.saturating_sub(1)
+                    window_start.saturating_sub(1)
                 );
 
                 indexer.delete_window(cursor)?;
-                indexer.index_first_block(start)?;
+                indexer.index_first_block(window_start)?;
             }
             // A restart that is not catching up, but the cursor is already at or above tip - retention_depth, so no blocks are skipped.
             Some(cursor) => {
@@ -88,22 +88,22 @@ where
 
     /// True once the indexer has read every block the node has.
     pub fn is_ready(&self) -> Result<bool, IndexerError> {
-        Ok(self.get_best_height()? >= self.bitcoin_client.get_best_block()?)
+        Ok(self.get_indexed_height()? >= self.bitcoin_client.get_tip_height()?)
     }
 
     /// Height of the highest block the indexer has read. Always present once the indexer is built.
-    pub fn get_best_height(&self) -> Result<BlockHeight, IndexerError> {
+    pub fn get_indexed_height(&self) -> Result<BlockHeight, IndexerError> {
         self.store.get_cursor_or_err()
     }
 
     /// The highest block the indexer has read. Always present once the indexer is built.
-    pub fn get_best_block(&self) -> Result<FullBlock, IndexerError> {
-        self.store.get_block_or_err(self.get_best_height()?)
+    pub fn get_last_indexed_block(&self) -> Result<FullBlock, IndexerError> {
+        self.store.get_block_or_err(self.get_indexed_height()?)
     }
 
     /// Returns the block with this height and hash.
     /// - If the indexer holds a block at `height` with that hash, it is returned from storage.
-    /// - If `height` is older than every block the indexer holds, the block is downloaded from the node.
+    /// - If `height` is below every block the indexer holds, the block is downloaded from the node.
     /// - Otherwise it returns `None`, because that block is not on the chain the indexer has processed.
     pub fn get_block(
         &self,
@@ -122,9 +122,9 @@ where
             return Ok(Some(stored));
         }
 
-        // Check that the height is older than everything the indexer holds.
-        let cursor = self.get_best_height()?;
-        if !is_older_than_window(height, cursor, false) {
+        // Check that the height is below everything the indexer holds.
+        let cursor = self.get_indexed_height()?;
+        if !is_below_window(height, cursor, false) {
             info!("Block {hash} at height {height} is above the indexed height {cursor}");
             return Ok(None);
         }
@@ -148,34 +148,34 @@ where
     /// new block to add, return false.
     pub fn tick(&self) -> Result<bool, IndexerError> {
         let added = self.advance()?;
-        self.refresh_mempool_cache()?;
+        self.refresh_mempool_watch_list()?;
         Ok(added)
     }
 
     /// Registers a txid to follow in the mempool on every tick.
     pub fn add_mempool_watch(&self, tx_id: Txid) -> Result<(), IndexerError> {
-        self.store.add_watch(tx_id)
+        self.store.add_mempool_watch(tx_id)
     }
 
     /// Stops following a txid. Only the consumer can decide this.
     pub fn remove_mempool_watch(&self, tx_id: &Txid) -> Result<(), IndexerError> {
-        self.store.remove_watch(tx_id)
+        self.store.remove_mempool_watch(tx_id)
     }
 
     /// What the indexer knows about a transaction, in three steps:
     /// 1. In a block the indexer holds, which answers from storage.
     /// 2. Watched and in this tick's mempool snapshot, when the caller asked about the mempool.
-    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block older than the window
+    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
     ///    and one in the mempool that nobody watches.
     ///
-    /// `search_in_mempool` suppresses mempool answers from the indexer's cache, it does not stop the node being asked.
+    /// `include_mempool` suppresses mempool answers from the indexer's snapshot, it does not stop the node being asked.
     pub fn get_transaction(
         &self,
         tx_id: &Txid,
-        search_in_mempool: bool,
+        include_mempool: bool,
     ) -> Result<TransactionStatus, IndexerError> {
         if let Some((tx, block)) = self.store.get_indexed_tx(tx_id)? {
-            let cursor = self.get_best_height()?;
+            let cursor = self.get_indexed_height()?;
 
             return Ok(TransactionStatus::new(
                 tx,
@@ -185,31 +185,31 @@ where
             ));
         }
 
-        if search_in_mempool && self.store.is_in_mempool_cache(tx_id)? {
+        if include_mempool && self.store.is_in_mempool_snapshot(tx_id)? {
             return Ok(TransactionStatus::InMempool);
         }
 
-        self.get_transaction_from_node(tx_id, search_in_mempool)
+        self.get_transaction_from_node(tx_id, include_mempool)
     }
 
     /// Fee rate estimated from the most recently indexed block.
     pub fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
-        let best_block = self.get_best_block()?;
+        let last_block = self.get_last_indexed_block()?;
 
-        if best_block.height != self.bitcoin_client.get_best_block()? {
-            return Err(IndexerError::IndexerNotSynced);
+        if last_block.height != self.bitcoin_client.get_tip_height()? {
+            return Err(IndexerError::NotSynced);
         }
 
-        if best_block.estimated_fee_rate == 0 {
+        if last_block.estimated_fee_rate == 0 {
             return Err(IndexerError::FeeRateNotEstimated);
         }
 
-        Ok(best_block.estimated_fee_rate)
+        Ok(last_block.estimated_fee_rate)
     }
 
     /// Live RPC check for UTXO spendability, bypassing everything the indexer stores.
     /// True when the UTXO is unspent, counting the mempool when `include_mempool` is true.
-    pub fn is_utxo_unspent_rpc(
+    pub fn rpc_is_utxo_unspent(
         &self,
         tx_id: &Txid,
         vout: u32,
@@ -222,7 +222,7 @@ where
 
     /// Live `getrawtransaction` confirmation probe. `None` when the node does not know the transaction,
     /// `Some(0)` when it is in the mempool, `Some(n)` when it is mined with n confirmations.
-    pub fn get_tx_confirmations(&self, tx_id: &Txid) -> Result<Option<u32>, IndexerError> {
+    pub fn rpc_get_tx_confirmations(&self, tx_id: &Txid) -> Result<Option<u32>, IndexerError> {
         Ok(self.bitcoin_client.get_tx_confirmations(tx_id)?)
     }
 
@@ -232,8 +232,8 @@ where
 
     /// Moves the indexer at most one block. Returns true only when a block was added.
     fn advance(&self) -> Result<bool, IndexerError> {
-        let cursor = self.get_best_height()?;
-        let tip = self.bitcoin_client.get_best_block()?;
+        let cursor = self.get_indexed_height()?;
+        let tip = self.bitcoin_client.get_tip_height()?;
 
         // The node's chain is shorter than the indexed one.
         if cursor > tip {
@@ -242,7 +242,7 @@ where
         }
 
         let last_block = self.store.get_block_or_err(cursor)?;
-        let node_block = self.node_block_at(cursor)?;
+        let node_block = self.rpc_get_block_at(cursor)?;
 
         // The last indexed block was reorged out: the node has a different block at that height.
         if node_block.hash != last_block.hash {
@@ -251,7 +251,7 @@ where
                 cursor, last_block.hash, node_block.hash
             );
 
-            self.remove_last_block(cursor)?;
+            self.remove_last_indexed_block(cursor)?;
             return Ok(false);
         }
 
@@ -262,7 +262,7 @@ where
 
         // Cursor < tip, so the node has a new block.
         let next_height = cursor.saturating_add(1);
-        let next_block = self.node_block_at(next_height)?;
+        let next_block = self.rpc_get_block_at(next_height)?;
 
         // The next block does not build on the last indexed block, so that block was reorged out between the two reads above.
         if next_block.prev_hash != last_block.hash {
@@ -275,12 +275,12 @@ where
         }
 
         info!("Indexing block {} of {}", next_height, tip);
-        self.add_block(next_block)?;
+        self.index_block(next_block)?;
 
         Ok(true)
     }
 
-    /// Deletes the indexed blocks above the node's tip, puts the watch entries they confirmed back
+    /// Deletes the indexed blocks above the node's tip, puts the mempool watch entries they confirmed back
     /// to pending, and moves the cursor to the tip.
     fn remove_blocks_above(
         &self,
@@ -297,21 +297,21 @@ where
             self.store.delete_block(height)?;
         }
 
-        self.reset_watch_from(tip.saturating_add(1))?;
+        self.reset_mempool_watch_list_from(tip.saturating_add(1))?;
         self.store.save_cursor(tip)
     }
 
-    /// Deletes the block at the cursor with the locators of its transactions, puts the watch entries
+    /// Deletes the block at the cursor with the height entries of its transactions, puts the mempool watch entries
     /// it confirmed back to pending, and moves the cursor one block back.
-    fn remove_last_block(&self, cursor: BlockHeight) -> Result<(), IndexerError> {
+    fn remove_last_indexed_block(&self, cursor: BlockHeight) -> Result<(), IndexerError> {
         self.store.delete_block(cursor)?;
-        self.reset_watch_from(cursor)?;
+        self.reset_mempool_watch_list_from(cursor)?;
         self.store.save_cursor(cursor.saturating_sub(1))
     }
 
     /// Stores a block with its estimated fee rate, moves the cursor onto it, and deletes the block
     /// that falls out of the retention window.
-    fn add_block(&self, block: BlockInfo) -> Result<(), IndexerError> {
+    fn index_block(&self, block: BlockInfo) -> Result<(), IndexerError> {
         let height = block.height;
         let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txs)?;
 
@@ -332,12 +332,12 @@ where
     }
 
     /// Asks the node about every watched transaction that is not already confirmed in a held block, and records the answers.
-    fn refresh_mempool_cache(&self) -> Result<(), IndexerError> {
-        let mut watch_list = self.store.get_watch_list()?;
+    fn refresh_mempool_watch_list(&self) -> Result<(), IndexerError> {
+        let mut mempool_watch_list = self.store.get_mempool_watch_list()?;
         let mut in_mempool = Vec::new();
-        let mut watch_list_changed = false;
+        let mut mempool_watch_list_changed = false;
 
-        for (tx_id, confirmed_at) in watch_list.iter_mut() {
+        for (tx_id, confirmed_at) in mempool_watch_list.iter_mut() {
             // Already confirmed in a block the indexer holds. No block read and no RPC call.
             if confirmed_at.is_some() {
                 continue;
@@ -345,7 +345,7 @@ where
 
             if let Some(height) = self.store.get_tx_height(tx_id)? {
                 *confirmed_at = Some(height);
-                watch_list_changed = true;
+                mempool_watch_list_changed = true;
                 continue;
             }
 
@@ -354,17 +354,17 @@ where
             }
         }
 
-        if watch_list_changed {
-            self.store.save_watch_list(watch_list)?;
+        if mempool_watch_list_changed {
+            self.store.save_mempool_watch_list(mempool_watch_list)?;
         }
 
-        self.store.save_mempool_cache(in_mempool)?;
+        self.store.save_mempool_snapshot(in_mempool)?;
 
         Ok(())
     }
 
     /// The rpc node's block at this height. Fails with `BlockNotFound` when the node has none.
-    fn node_block_at(&self, height: BlockHeight) -> Result<BlockInfo, IndexerError> {
+    fn rpc_get_block_at(&self, height: BlockHeight) -> Result<BlockInfo, IndexerError> {
         self.bitcoin_client
             .get_block_by_height(&height)?
             .ok_or(IndexerError::BlockNotFound(height))
@@ -372,7 +372,7 @@ where
 
     /// Reads the block that a fresh start, or a jump, begins from, and puts the cursor on it.
     fn index_first_block(&self, height: BlockHeight) -> Result<(), IndexerError> {
-        let block = self.node_block_at(height)?;
+        let block = self.rpc_get_block_at(height)?;
 
         let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txs)?;
 
@@ -397,16 +397,16 @@ where
             self.store.delete_block(height)?;
         }
 
-        self.reset_watch_from(0)
+        self.reset_mempool_watch_list_from(0)
     }
 
-    /// Puts every watch entry confirmed at `height` or above back to pending, because the blocks that
+    /// Puts every mempool watch entry confirmed at `height` or above back to pending, because the blocks that
     /// confirmed them are no longer held. The next refresh checks them again.
-    fn reset_watch_from(&self, height: BlockHeight) -> Result<(), IndexerError> {
-        let mut watch_list = self.store.get_watch_list()?;
+    fn reset_mempool_watch_list_from(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let mut mempool_watch_list = self.store.get_mempool_watch_list()?;
         let mut changed = false;
 
-        for (_, confirmed_at) in watch_list.iter_mut() {
+        for (_, confirmed_at) in mempool_watch_list.iter_mut() {
             if confirmed_at.is_some_and(|confirmed| confirmed >= height) {
                 *confirmed_at = None;
                 changed = true;
@@ -414,7 +414,7 @@ where
         }
 
         if changed {
-            self.store.save_watch_list(watch_list)?;
+            self.store.save_mempool_watch_list(mempool_watch_list)?;
         }
 
         Ok(())
@@ -422,15 +422,15 @@ where
 
     /// The node is asked once whether the transaction is mined, in the mempool, or unknown. A mined
     /// transaction costs one more call, for the height of its block, and is only reported `Confirmed` when that
-    /// block is older than everything the indexer holds.
+    /// block is below everything the indexer holds.
     fn get_transaction_from_node(
         &self,
         tx_id: &Txid,
-        search_in_mempool: bool,
+        include_mempool: bool,
     ) -> Result<TransactionStatus, IndexerError> {
         // A transaction that is ahed of the indexer is cannot be evaluated for confirmation, so it is reported as pending.
         let not_confirmed = || {
-            if search_in_mempool {
+            if include_mempool {
                 TransactionStatus::InMempool
             } else {
                 TransactionStatus::NotFound
@@ -458,11 +458,11 @@ where
             .bitcoin_client
             .get_block_header_info(&block_hash)?
             .height as BlockHeight;
-        let cursor = self.get_best_height()?;
-        let block_stored_at_height = self.store.get_block(height)?.is_some();
+        let cursor = self.get_indexed_height()?;
+        let height_is_stored = self.store.get_block(height)?.is_some();
 
         // A block above the cursor, or at a height the indexer holds with a different block, is one the indexer has not processed.
-        if !is_older_than_window(height, cursor, block_stored_at_height) {
+        if !is_below_window(height, cursor, height_is_stored) {
             return Ok(not_confirmed());
         }
 
@@ -541,7 +541,7 @@ mod tests {
             .expect_is_txindex_enabled()
             .returning(|| Ok(true));
         bitcoin_client
-            .expect_get_best_block()
+            .expect_get_tip_height()
             .returning(move || Ok(tip));
 
         bitcoin_client
@@ -572,7 +572,7 @@ mod tests {
         let store = temp_store();
         let indexer = Indexer::new(bitcoin_client, store.clone(), settings(100, true)).unwrap();
 
-        assert_eq!(indexer.get_best_height().unwrap(), 900);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 900);
         assert_eq!(store.get_block(900).unwrap().unwrap().height, 900);
     }
 
@@ -586,7 +586,7 @@ mod tests {
 
         let indexer = Indexer::new(bitcoin_client, temp_store(), settings(100, true)).unwrap();
 
-        assert_eq!(indexer.get_best_height().unwrap(), 0);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 0);
     }
 
     // A node without -txindex is refused.
@@ -611,7 +611,7 @@ mod tests {
         let bitcoin_client = mock_node_at_tip(1000);
         let indexer = Indexer::new(bitcoin_client, store, settings(100, true)).unwrap();
 
-        assert_eq!(indexer.get_best_height().unwrap(), 10);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
     }
 
     // A restart without catch_up jumps to the tip and deletes the old window.
@@ -629,7 +629,7 @@ mod tests {
 
         let indexer = Indexer::new(bitcoin_client, store.clone(), settings(100, false)).unwrap();
 
-        assert_eq!(indexer.get_best_height().unwrap(), 900);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 900);
         assert_eq!(store.get_block(10).unwrap(), None);
         assert_eq!(
             store.get_tx_height(&old.txs[0].compute_txid()).unwrap(),
@@ -645,7 +645,7 @@ mod tests {
         let bitcoin_client = mock_node_at_tip(999);
         let indexer = Indexer::new(bitcoin_client, store, settings(100, false)).unwrap();
 
-        assert_eq!(indexer.get_best_height().unwrap(), 899);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 899);
     }
 
     // A tick indexes the next block and prunes the one that falls out of the window.
@@ -665,14 +665,14 @@ mod tests {
 
         // Retention 2 keeps the cursor and the block below it.
         let indexer = Indexer::new(bitcoin_client, store.clone(), settings(2, true)).unwrap();
-        assert_eq!(indexer.get_best_height().unwrap(), 10);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
 
         assert!(indexer.tick().unwrap());
-        assert_eq!(indexer.get_best_height().unwrap(), 11);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 11);
         assert!(store.get_block(10).unwrap().is_some());
 
         assert!(indexer.tick().unwrap());
-        assert_eq!(indexer.get_best_height().unwrap(), 12);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 12);
         assert_eq!(store.get_block(10).unwrap(), None);
         assert!(store.get_block(11).unwrap().is_some());
     }
@@ -694,15 +694,15 @@ mod tests {
 
         assert!(!indexer.tick().unwrap());
 
-        assert_eq!(indexer.get_best_height().unwrap(), 10);
-        assert!(store.is_in_mempool_cache(&watched).unwrap());
+        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
+        assert!(store.is_in_mempool_snapshot(&watched).unwrap());
         assert_eq!(
             indexer.get_transaction(&watched, true).unwrap(),
             TransactionStatus::InMempool
         );
     }
 
-    // A reorg deletes the block that lost, resets its watch entries and steps back one block.
+    // A reorg deletes the block that lost, resets its mempool watch entries and steps back one block.
     #[test]
     fn tick_reorg() {
         let store = temp_store();
@@ -715,7 +715,7 @@ mod tests {
             .unwrap();
         store.save_cursor(10).unwrap();
         store
-            .save_watch_list(vec![(tx.compute_txid(), Some(10))])
+            .save_mempool_watch_list(vec![(tx.compute_txid(), Some(10))])
             .unwrap();
 
         let mut bitcoin_client = mock_node_at_tip(10);
@@ -729,15 +729,15 @@ mod tests {
         // Unwinding is the indexer's own work, so the tick reports no new block.
         assert!(!indexer.tick().unwrap());
 
-        assert_eq!(indexer.get_best_height().unwrap(), 9);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 9);
         assert_eq!(store.get_block(10).unwrap(), None);
         assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), None);
         // The entry went back to pending and the refresh found the transaction in the mempool.
         assert_eq!(
-            store.get_watch_list().unwrap(),
+            store.get_mempool_watch_list().unwrap(),
             vec![(tx.compute_txid(), None)]
         );
-        assert!(store.is_in_mempool_cache(&tx.compute_txid()).unwrap());
+        assert!(store.is_in_mempool_snapshot(&tx.compute_txid()).unwrap());
     }
 
     // A next block that does not build on the block at the cursor is not stored.
@@ -761,7 +761,7 @@ mod tests {
         let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
         assert!(!indexer.tick().unwrap());
 
-        assert_eq!(indexer.get_best_height().unwrap(), 10);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
         assert_eq!(store.get_block(11).unwrap(), None);
     }
 
@@ -787,7 +787,7 @@ mod tests {
         }
         store.save_cursor(10).unwrap();
         store
-            .save_watch_list(vec![(tx.compute_txid(), Some(10))])
+            .save_mempool_watch_list(vec![(tx.compute_txid(), Some(10))])
             .unwrap();
 
         let mut bitcoin_client = mock_node_at_tip(8);
@@ -798,11 +798,11 @@ mod tests {
         let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
         assert!(!indexer.tick().unwrap());
 
-        assert_eq!(indexer.get_best_height().unwrap(), 8);
+        assert_eq!(indexer.get_indexed_height().unwrap(), 8);
         assert_eq!(store.get_block(9).unwrap(), None);
         assert_eq!(store.get_block(10).unwrap(), None);
         assert_eq!(
-            store.get_watch_list().unwrap(),
+            store.get_mempool_watch_list().unwrap(),
             vec![(tx.compute_txid(), None)]
         );
     }
@@ -1019,14 +1019,14 @@ mod tests {
     // A block below the window is downloaded from the node, with its fee rate.
     #[test]
     fn block_below_window() {
-        let old_block = block_at_height(50, [49u8; 32]);
+        let old_block = bitcoin_block(50, [49u8; 32]);
         let old_hash = old_block.block_hash();
 
         let mut bitcoin_client = mock_node_at_tip(1000);
         bitcoin_client
             .expect_get_block_by_hash()
             .withf(move |hash| *hash == old_hash)
-            .returning(move |_| Ok(block_at_height(50, [49u8; 32])));
+            .returning(move |_| Ok(bitcoin_block(50, [49u8; 32])));
 
         let indexer = Indexer::new(bitcoin_client, store_at(1000), settings(100, true)).unwrap();
 
@@ -1039,7 +1039,7 @@ mod tests {
         assert_eq!(block.estimated_fee_rate, 0);
     }
 
-    // The indexer never removes a watch entry on its own, only remove_mempool_watch does.
+    // The indexer never removes a mempool watch entry on its own, only remove_mempool_watch does.
     #[test]
     fn watch_never_removed() {
         let store = temp_store();
@@ -1061,11 +1061,11 @@ mod tests {
         }
 
         assert_eq!(
-            store.get_watch_list().unwrap(),
+            store.get_mempool_watch_list().unwrap(),
             vec![(tx.compute_txid(), None)]
         );
 
         indexer.remove_mempool_watch(&tx.compute_txid()).unwrap();
-        assert!(store.get_watch_list().unwrap().is_empty());
+        assert!(store.get_mempool_watch_list().unwrap().is_empty());
     }
 }

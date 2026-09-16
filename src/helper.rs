@@ -6,7 +6,7 @@ use crate::errors::IndexerError;
 
 /// Where a fresh database, or a restart that is not catching up, starts indexing: one window below the tip.
 /// Saturating, so a chain shorter than the window starts at genesis.
-pub fn start_height(tip: BlockHeight, retention_depth: BlockHeight) -> BlockHeight {
+pub fn window_start(tip: BlockHeight, retention_depth: BlockHeight) -> BlockHeight {
     tip.saturating_sub(retention_depth)
 }
 
@@ -22,14 +22,14 @@ pub fn height_to_prune(cursor: BlockHeight, retention_depth: BlockHeight) -> Opt
     cursor.checked_sub(retention_depth)
 }
 
-/// Whether a block the node reports is older than everything the indexer holds, which is the only kind of
-/// block the node is trusted to answer for using RPC. Above the cursor is a block the indexer has not reached.
-pub fn is_older_than_window(
+/// Whether a block the node reports is below every block the indexer holds, which is the only kind of block the
+/// node is trusted to answer for using RPC. A block above the indexed height has not been reached yet.
+pub fn is_below_window(
     height: BlockHeight,
-    cursor: BlockHeight,
-    block_stored_at_height: bool,
+    indexed_height: BlockHeight,
+    height_is_stored: bool,
 ) -> bool {
-    height <= cursor && !block_stored_at_height
+    height <= indexed_height && !height_is_stored
 }
 
 /// Estimates the fee rate for the next block based on the middle transaction of the given block.
@@ -134,16 +134,16 @@ mod tests {
     // A fresh start begins one window below the tip.
     #[test]
     fn start_below_tip() {
-        assert_eq!(start_height(1000, 100), 900);
-        assert_eq!(start_height(100, 100), 0);
+        assert_eq!(window_start(1000, 100), 900);
+        assert_eq!(window_start(100, 100), 0);
     }
 
     // A chain shorter than the window starts at genesis instead of wrapping.
     #[test]
     fn start_short_chain() {
         // Release builds wrap on overflow instead of panicking, so this has to saturate explicitly.
-        assert_eq!(start_height(3, 100), 0);
-        assert_eq!(start_height(0, 100), 0);
+        assert_eq!(window_start(3, 100), 0);
+        assert_eq!(window_start(0, 100), 0);
     }
 
     // Confirmations count the block itself.
@@ -171,21 +171,21 @@ mod tests {
     // A block above the cursor has not been processed, so it is not old.
     #[test]
     fn above_cursor_not_old() {
-        assert!(!is_older_than_window(11, 10, false));
+        assert!(!is_below_window(11, 10, false));
     }
 
     // A different block at a held height is a reorg the indexer has not unwound yet.
     #[test]
     fn held_height_not_old() {
-        assert!(!is_older_than_window(10, 10, true));
-        assert!(!is_older_than_window(5, 10, true));
+        assert!(!is_below_window(10, 10, true));
+        assert!(!is_below_window(5, 10, true));
     }
 
     // A height below everything the indexer holds is old.
     #[test]
     fn below_window_old() {
-        assert!(is_older_than_window(5, 10, false));
-        assert!(is_older_than_window(0, 10, false));
+        assert!(is_below_window(5, 10, false));
+        assert!(is_below_window(0, 10, false));
     }
 
     // A block with few transactions has no fee rate and makes no call.

@@ -75,7 +75,7 @@ pub fn block_info(
     }
 }
 
-pub fn block_at_height(height: BlockHeight, prev_hash: [u8; 32]) -> Block {
+pub fn bitcoin_block(height: BlockHeight, prev_hash: [u8; 32]) -> Block {
     let txdata = vec![coinbase_at(height)];
 
     Block {

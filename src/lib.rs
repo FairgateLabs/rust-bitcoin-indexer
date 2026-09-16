@@ -1,4 +1,3 @@
-use crate::indexer::Indexer;
 use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 
 pub mod config;
@@ -15,7 +14,7 @@ pub mod test_utils;
 // happen to live in today.
 pub use config::IndexerSettings;
 pub use errors::IndexerError;
-pub use indexer::Indexer as BitcoinIndexer;
+pub use indexer::Indexer;
 pub use store::IndexerStore;
 pub use types::{FullBlock, TransactionStatus};
 

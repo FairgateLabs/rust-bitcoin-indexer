@@ -71,11 +71,11 @@ impl TransactionStatus {
     pub fn tx_or_err(&self) -> Result<&Transaction, IndexerError> {
         match self {
             Self::Confirmed { tx, .. } => Ok(tx),
-            _ => Err(IndexerError::MissingTransactionData),
+            _ => Err(IndexerError::NotConfirmed),
         }
     }
 
-    pub fn tx_id_or_error(&self) -> Result<Txid, IndexerError> {
+    pub fn tx_id_or_err(&self) -> Result<Txid, IndexerError> {
         Ok(self.tx_or_err()?.compute_txid())
     }
 }
@@ -135,7 +135,7 @@ mod tests {
         assert!(status.is_finalized(5));
         assert!(!status.is_finalized(6));
         assert!(status.tx_or_err().is_ok());
-        assert_eq!(status.tx_id_or_error().unwrap(), dummy_tx(0).compute_txid());
+        assert_eq!(status.tx_id_or_err().unwrap(), dummy_tx(0).compute_txid());
 
         for other in [TransactionStatus::InMempool, TransactionStatus::NotFound] {
             assert!(!other.is_confirmed());
