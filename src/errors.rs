@@ -17,6 +17,10 @@ pub enum IndexerError {
     #[error("Block at height {0} not found")]
     BlockNotFound(BlockHeight),
 
+    /// The node's chain changed below the oldest block the indexer holds, so the indexer cannot continue.
+    #[error("Reorg deeper than the retention window: no block stored at height {0} to continue from")]
+    ReorgDeeperThanWindow(BlockHeight),
+
     #[error("Fee rate can't be estimated")]
     FeeRateNotEstimated,
 

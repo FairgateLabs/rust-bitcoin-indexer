@@ -194,70 +194,53 @@ mod tests {
     use crate::errors::IndexerError;
     use crate::test_utils::{dummy_tx, full_block, temp_store};
 
-    // A saved block comes back, with a height entry for each of its transactions.
+    // Blocks are saved and deleted together with the height entries of their transactions.
     #[test]
-    fn save_block() {
+    fn blocks() {
         let store = temp_store();
         let block = full_block(10, [1u8; 32], [0u8; 32], vec![dummy_tx(1), dummy_tx(2)]);
 
-        store.save_block(&block).unwrap();
-
-        assert_eq!(store.get_block(10).unwrap(), Some(block.clone()));
-        for tx in &block.txs {
-            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(10));
-        }
-    }
-
-    // Deleting a block deletes the height entries of its transactions too.
-    #[test]
-    fn delete_block() {
-        let store = temp_store();
-        let block = full_block(10, [1u8; 32], [0u8; 32], vec![dummy_tx(1), dummy_tx(2)]);
-        store.save_block(&block).unwrap();
-
-        store.delete_block(10).unwrap();
-
-        assert_eq!(store.get_block(10).unwrap(), None);
-        for tx in &block.txs {
-            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), None);
-        }
-    }
-
-    // Deleting a height with no block is not an error.
-    #[test]
-    fn delete_missing_block() {
-        let store = temp_store();
-        assert!(store.delete_block(42).is_ok());
-    }
-
-    // A block read that must succeed fails with BlockNotFound when no block is stored at that height.
-    #[test]
-    fn block_or_err() {
-        let store = temp_store();
+        // A read that must succeed fails with BlockNotFound before the block is saved.
         assert!(matches!(
             store.get_block_or_err(10),
             Err(IndexerError::BlockNotFound(10))
         ));
 
-        let block = full_block(10, [1u8; 32], [0u8; 32], vec![]);
+        // A saved block comes back, with a height entry for each of its transactions.
         store.save_block(&block).unwrap();
+        assert_eq!(store.get_block(10).unwrap(), Some(block.clone()));
         assert_eq!(store.get_block_or_err(10).unwrap(), block);
+        for tx in &block.txs {
+            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(10));
+        }
+
+        // Deleting it deletes the height entries too.
+        store.delete_block(10).unwrap();
+        assert_eq!(store.get_block(10).unwrap(), None);
+        for tx in &block.txs {
+            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), None);
+        }
+
+        // Deleting a height with no block is not an error.
+        assert!(store.delete_block(42).is_ok());
     }
 
     // A cursor read that must succeed fails until the cursor is saved.
     #[test]
-    fn cursor_or_err() {
+    fn cursor() {
         let store = temp_store();
+        assert_eq!(store.get_cursor().unwrap(), None);
         assert!(matches!(
             store.get_cursor_or_err(),
             Err(IndexerError::InvariantViolation(_))
         ));
 
         store.save_cursor(7).unwrap();
+        assert_eq!(store.get_cursor().unwrap(), Some(7));
         assert_eq!(store.get_cursor_or_err().unwrap(), 7);
     }
 
-    // An indexed transaction comes back with the block that holds it, and is gone once that block is deleted.
+    // An indexed transaction comes back with the block that holds it, and follows the block that is kept after a reorg.
     #[test]
     fn indexed_tx() {
         let store = temp_store();
@@ -265,6 +248,7 @@ mod tests {
         let block = full_block(10, [1u8; 32], [0u8; 32], vec![dummy_tx(2), tx.clone()]);
         store.save_block(&block).unwrap();
 
+        // A held transaction, and one that was never indexed.
         assert_eq!(
             store.get_indexed_tx(&tx.compute_txid()).unwrap(),
             Some((tx.clone(), block))
@@ -274,24 +258,12 @@ mod tests {
             None
         );
 
+        // The block that loses a reorg is deleted before the winning one is stored, whatever their heights.
         store.delete_block(10).unwrap();
         assert_eq!(store.get_indexed_tx(&tx.compute_txid()).unwrap(), None);
-    }
-
-    // A transaction in both chains ends up pointing at the block that is kept.
-    #[test]
-    fn tx_height_follows_winner() {
-        let store = temp_store();
-        let tx = dummy_tx(1);
-
-        // The block that loses a reorg is deleted before the winning one is stored, whatever their heights.
-        let orphaned = full_block(10, [1u8; 32], [0u8; 32], vec![tx.clone()]);
-        store.save_block(&orphaned).unwrap();
-        store.delete_block(10).unwrap();
 
         let winner = full_block(11, [2u8; 32], [0u8; 32], vec![tx.clone()]);
         store.save_block(&winner).unwrap();
-
         assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(11));
     }
 

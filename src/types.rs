@@ -89,39 +89,38 @@ mod tests {
         TransactionStatus::new(dummy_tx(0), 7, block_hash([1u8; 32]), confirmations)
     }
 
-    // A confirmed status puts the variant name in a status field next to its data.
+    // Every variant serializes with its name in a status field, and comes back unchanged.
     #[test]
-    fn confirmed_json_shape() {
-        let value: serde_json::Value = serde_json::to_value(confirmed(4)).unwrap();
-
+    fn serde() {
+        // Confirmed puts its data next to the status field.
+        let value = serde_json::to_value(confirmed(4)).unwrap();
         assert_eq!(value["status"], "Confirmed");
         assert_eq!(value["confirmations"], 4);
         assert_eq!(value["block_height"], 7);
         assert!(value["block_hash"].is_string());
         assert!(value["tx"].is_object());
         assert!(value.get("block_info").is_none());
-    }
 
-    // InMempool and NotFound serialize as the status field alone.
-    #[test]
-    fn unconfirmed_json_shape() {
+        // InMempool and NotFound are the status field alone.
         let value = serde_json::to_value(TransactionStatus::NotFound).unwrap();
         assert_eq!(value["status"], "NotFound");
         assert!(value.get("tx").is_none());
 
         let value = serde_json::to_value(TransactionStatus::InMempool).unwrap();
         assert_eq!(value["status"], "InMempool");
-    }
 
-    // A confirmed status comes back unchanged after serializing and deserializing it.
-    #[test]
-    fn confirmed_round_trip() {
-        let status = confirmed(2);
-        let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(
-            serde_json::from_str::<TransactionStatus>(&json).unwrap(),
-            status
-        );
+        // Round trip of every variant.
+        for status in [
+            confirmed(2),
+            TransactionStatus::InMempool,
+            TransactionStatus::NotFound,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<TransactionStatus>(&json).unwrap(),
+                status
+            );
+        }
     }
 
     // Every predicate and accessor answers correctly for each variant.

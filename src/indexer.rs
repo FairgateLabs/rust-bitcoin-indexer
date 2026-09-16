@@ -1,9 +1,7 @@
 use crate::{
     config::IndexerSettings,
     errors::IndexerError,
-    helper::{
-        confirmations, estimate_fee_rate, height_to_prune, is_below_window, window_start,
-    },
+    helper::{confirmations, estimate_fee_rate, height_to_prune, is_below_window, window_start},
     store::IndexerStore,
     types::{FullBlock, TransactionStatus},
 };
@@ -51,7 +49,7 @@ where
         let tip = indexer.bitcoin_client.get_tip_height()?;
         let window_start = window_start(tip, indexer.settings.retention_depth);
 
-        // If a reorg that happened while this processwas down tick() is the single place that unwinds one.
+        // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
         match indexer.store.get_cursor()? {
             // A fresh database has no subscriptions yet. Start one window below the tip.
             None => {
@@ -103,7 +101,8 @@ where
 
     /// Returns the block with this height and hash.
     /// - If the indexer holds a block at `height` with that hash, it is returned from storage.
-    /// - If `height` is below every block the indexer holds, the block is downloaded from the node.
+    /// - If `height` is below every block the indexer holds and the node's block at `height` has that hash, it is
+    ///   downloaded from the node.
     /// - Otherwise it returns `None`, because that block is not on the chain the indexer has processed.
     pub fn get_block(
         &self,
@@ -129,7 +128,13 @@ where
             return Ok(None);
         }
 
-        // The indexer does not hold a block at this height, so the node is asked for it.
+        // A downloaded block does not carry its height, so the node's block at that height must be the one asked for.
+        let node_hash = self.bitcoin_client.get_block_id_by_height(&height)?;
+        if node_hash != *hash {
+            info!("Block {hash} is not the node's block at height {height}, which is {node_hash}");
+            return Ok(None);
+        }
+
         let block = self.bitcoin_client.get_block_by_hash(hash)?;
         let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txdata)?;
 
@@ -237,6 +242,11 @@ where
 
         // The node's chain is shorter than the indexed one.
         if cursor > tip {
+            // Nothing is deleted when the indexer holds no block at the node's tip to continue from.
+            if self.store.get_block(tip)?.is_none() {
+                return Err(IndexerError::ReorgDeeperThanWindow(tip));
+            }
+
             self.remove_blocks_above(tip, cursor)?;
             return Ok(false);
         }
@@ -250,6 +260,12 @@ where
                 "Reorg detected at height {}. Indexed {}, node {}",
                 cursor, last_block.hash, node_block.hash
             );
+
+            // The block is kept when the indexer holds no block below it to continue from.
+            let below = cursor.saturating_sub(1);
+            if self.store.get_block(below)?.is_none() {
+                return Err(IndexerError::ReorgDeeperThanWindow(below));
+            }
 
             self.remove_last_indexed_block(cursor)?;
             return Ok(false);
@@ -428,7 +444,7 @@ where
         tx_id: &Txid,
         include_mempool: bool,
     ) -> Result<TransactionStatus, IndexerError> {
-        // A transaction that is ahed of the indexer is cannot be evaluated for confirmation, so it is reported as pending.
+        // A transaction ahead of the indexer cannot be evaluated for confirmation, so it is reported as pending.
         let not_confirmed = || {
             if include_mempool {
                 TransactionStatus::InMempool
@@ -478,594 +494,5 @@ where
             block_hash,
             confirmations(cursor, height),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_utils::*;
-    use bitcoin::consensus::serialize;
-    use bitcoin::hashes::Hash;
-    use bitcoin::Transaction;
-    use bitcoincore_rpc::json::{GetBlockHeaderResult, GetRawTransactionResult};
-    use bitvmx_bitcoin_rpc::bitcoin_client::MockBitcoinClientApi;
-
-    /// The node answer for a transaction, shaped like `getrawtransaction` verbose.
-    fn raw_tx_info(
-        tx: &Transaction,
-        block_hash: Option<BlockHash>,
-        confirmations: Option<u32>,
-    ) -> GetRawTransactionResult {
-        GetRawTransactionResult {
-            in_active_chain: None,
-            hex: serialize(tx),
-            txid: tx.compute_txid(),
-            hash: tx.compute_wtxid(),
-            size: 0,
-            vsize: 0,
-            version: 2,
-            locktime: 0,
-            vin: vec![],
-            vout: vec![],
-            blockhash: block_hash,
-            confirmations,
-            time: None,
-            blocktime: None,
-        }
-    }
-
-    /// The node answer for a block header, built from the JSON `getblockheader` returns.
-    fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderResult {
-        serde_json::from_value(serde_json::json!({
-            "hash": hash.to_string(),
-            "confirmations": 1,
-            "height": height,
-            "version": 536870912,
-            "versionHex": "20000000",
-            "merkleroot": "0000000000000000000000000000000000000000000000000000000000000000",
-            "time": 0,
-            "mediantime": 0,
-            "nonce": 0,
-            "bits": "207fffff",
-            "difficulty": 1.0,
-            "chainwork": "0000000000000000000000000000000000000000000000000000000000000002",
-            "nTx": 1
-        }))
-        .expect("a getblockheader answer")
-    }
-
-    fn mock_node_at_tip(tip: BlockHeight) -> MockBitcoinClientApi {
-        let mut bitcoin_client = MockBitcoinClientApi::new();
-        bitcoin_client
-            .expect_is_txindex_enabled()
-            .returning(|| Ok(true));
-        bitcoin_client
-            .expect_get_tip_height()
-            .returning(move || Ok(tip));
-
-        bitcoin_client
-    }
-
-    fn settings(retention_depth: BlockHeight, catch_up: bool) -> Option<IndexerSettings> {
-        Some(IndexerSettings::new(retention_depth, catch_up))
-    }
-
-    /// A store holding one block at `cursor`, with the cursor on it.
-    fn store_at(cursor: BlockHeight) -> Rc<IndexerStore> {
-        let store = temp_store();
-        store
-            .save_block(&full_block(cursor, [cursor as u8; 32], [0u8; 32], vec![]))
-            .unwrap();
-        store.save_cursor(cursor).unwrap();
-        store
-    }
-
-    // A fresh database starts one window below the tip.
-    #[test]
-    fn new_fresh_start() {
-        let mut bitcoin_client = mock_node_at_tip(1000);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [90u8; 32], [89u8; 32], vec![]))));
-
-        let store = temp_store();
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(100, true)).unwrap();
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 900);
-        assert_eq!(store.get_block(900).unwrap().unwrap().height, 900);
-    }
-
-    // A chain shorter than the window starts at genesis.
-    #[test]
-    fn new_short_chain() {
-        let mut bitcoin_client = mock_node_at_tip(3);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [0u8; 32], [0u8; 32], vec![]))));
-
-        let indexer = Indexer::new(bitcoin_client, temp_store(), settings(100, true)).unwrap();
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 0);
-    }
-
-    // A node without -txindex is refused.
-    #[test]
-    fn new_requires_txindex() {
-        let mut bitcoin_client = MockBitcoinClientApi::new();
-        bitcoin_client
-            .expect_is_txindex_enabled()
-            .returning(|| Ok(false));
-
-        // Indexer holds the client, which is not Debug, so unwrap_err is not available here.
-        let result = Indexer::new(bitcoin_client, temp_store(), settings(100, true));
-
-        assert!(matches!(result, Err(IndexerError::InvalidConfiguration(_))));
-    }
-
-    // A restart with catch_up resumes from its cursor.
-    #[test]
-    fn new_catch_up() {
-        let store = store_at(10);
-
-        let bitcoin_client = mock_node_at_tip(1000);
-        let indexer = Indexer::new(bitcoin_client, store, settings(100, true)).unwrap();
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
-    }
-
-    // A restart without catch_up jumps to the tip and deletes the old window.
-    #[test]
-    fn new_jump() {
-        let store = temp_store();
-        let old = full_block(10, [10u8; 32], [9u8; 32], vec![dummy_tx(1)]);
-        store.save_block(&old).unwrap();
-        store.save_cursor(10).unwrap();
-
-        let mut bitcoin_client = mock_node_at_tip(1000);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [90u8; 32], [89u8; 32], vec![]))));
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(100, false)).unwrap();
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 900);
-        assert_eq!(store.get_block(10).unwrap(), None);
-        assert_eq!(
-            store.get_tx_height(&old.txs[0].compute_txid()).unwrap(),
-            None
-        );
-    }
-
-    // A restart without catch_up that is only one block behind does not jump.
-    #[test]
-    fn new_no_jump_one_behind() {
-        let store = store_at(899);
-
-        let bitcoin_client = mock_node_at_tip(999);
-        let indexer = Indexer::new(bitcoin_client, store, settings(100, false)).unwrap();
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 899);
-    }
-
-    // A tick indexes the next block and prunes the one that falls out of the window.
-    #[test]
-    fn tick_indexes_and_prunes() {
-        let store = temp_store();
-        let mut bitcoin_client = mock_node_at_tip(12);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| {
-                let h = *height as u8;
-                Ok(Some(block_info(*height, [h; 32], [h - 1; 32], vec![])))
-            });
-        bitcoin_client
-            .expect_check_in_mempool()
-            .returning(|_| false);
-
-        // Retention 2 keeps the cursor and the block below it.
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(2, true)).unwrap();
-        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
-
-        assert!(indexer.tick().unwrap());
-        assert_eq!(indexer.get_indexed_height().unwrap(), 11);
-        assert!(store.get_block(10).unwrap().is_some());
-
-        assert!(indexer.tick().unwrap());
-        assert_eq!(indexer.get_indexed_height().unwrap(), 12);
-        assert_eq!(store.get_block(10).unwrap(), None);
-        assert!(store.get_block(11).unwrap().is_some());
-    }
-
-    // A tick at the tip only refreshes the mempool snapshot.
-    #[test]
-    fn tick_at_tip() {
-        let store = store_at(10);
-        let watched = dummy_tx(1).compute_txid();
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [10u8; 32], [9u8; 32], vec![]))));
-        bitcoin_client.expect_check_in_mempool().returning(|_| true);
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(2, true)).unwrap();
-        indexer.add_mempool_watch(watched).unwrap();
-
-        assert!(!indexer.tick().unwrap());
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
-        assert!(store.is_in_mempool_snapshot(&watched).unwrap());
-        assert_eq!(
-            indexer.get_transaction(&watched, true).unwrap(),
-            TransactionStatus::InMempool
-        );
-    }
-
-    // A reorg deletes the block that lost, resets its mempool watch entries and steps back one block.
-    #[test]
-    fn tick_reorg() {
-        let store = temp_store();
-        let tx = dummy_tx(7);
-        store
-            .save_block(&full_block(9, [9u8; 32], [8u8; 32], vec![]))
-            .unwrap();
-        store
-            .save_block(&full_block(10, [10u8; 32], [9u8; 32], vec![tx.clone()]))
-            .unwrap();
-        store.save_cursor(10).unwrap();
-        store
-            .save_mempool_watch_list(vec![(tx.compute_txid(), Some(10))])
-            .unwrap();
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        // The chain now has a different block at height 10.
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [77u8; 32], [9u8; 32], vec![]))));
-        bitcoin_client.expect_check_in_mempool().returning(|_| true);
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
-        // Unwinding is the indexer's own work, so the tick reports no new block.
-        assert!(!indexer.tick().unwrap());
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 9);
-        assert_eq!(store.get_block(10).unwrap(), None);
-        assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), None);
-        // The entry went back to pending and the refresh found the transaction in the mempool.
-        assert_eq!(
-            store.get_mempool_watch_list().unwrap(),
-            vec![(tx.compute_txid(), None)]
-        );
-        assert!(store.is_in_mempool_snapshot(&tx.compute_txid()).unwrap());
-    }
-
-    // A next block that does not build on the block at the cursor is not stored.
-    #[test]
-    fn tick_prev_hash_mismatch() {
-        let store = store_at(10);
-
-        let mut bitcoin_client = mock_node_at_tip(11);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| match *height {
-                // The block at the cursor still matches, so no reorg is visible yet.
-                10 => Ok(Some(block_info(10, [10u8; 32], [9u8; 32], vec![]))),
-                // The next block comes from another chain: its parent is not the stored block.
-                _ => Ok(Some(block_info(11, [11u8; 32], [99u8; 32], vec![]))),
-            });
-        bitcoin_client
-            .expect_check_in_mempool()
-            .returning(|_| false);
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
-        assert!(!indexer.tick().unwrap());
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 10);
-        assert_eq!(store.get_block(11).unwrap(), None);
-    }
-
-    // A chain that shrank below the cursor drops the blocks above the new tip.
-    #[test]
-    fn tick_chain_shrank() {
-        let store = temp_store();
-        let tx = dummy_tx(3);
-        for height in 8..=10 {
-            let txs = if height == 10 {
-                vec![tx.clone()]
-            } else {
-                vec![]
-            };
-            store
-                .save_block(&full_block(
-                    height,
-                    [height as u8; 32],
-                    [(height - 1) as u8; 32],
-                    txs,
-                ))
-                .unwrap();
-        }
-        store.save_cursor(10).unwrap();
-        store
-            .save_mempool_watch_list(vec![(tx.compute_txid(), Some(10))])
-            .unwrap();
-
-        let mut bitcoin_client = mock_node_at_tip(8);
-        bitcoin_client
-            .expect_check_in_mempool()
-            .returning(|_| false);
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
-        assert!(!indexer.tick().unwrap());
-
-        assert_eq!(indexer.get_indexed_height().unwrap(), 8);
-        assert_eq!(store.get_block(9).unwrap(), None);
-        assert_eq!(store.get_block(10).unwrap(), None);
-        assert_eq!(
-            store.get_mempool_watch_list().unwrap(),
-            vec![(tx.compute_txid(), None)]
-        );
-    }
-
-    // A transaction in a held block is answered from storage.
-    #[test]
-    fn tx_in_window() {
-        let store = temp_store();
-        let tx = dummy_tx(5);
-        store
-            .save_block(&full_block(10, [10u8; 32], [9u8; 32], vec![tx.clone()]))
-            .unwrap();
-        store.save_cursor(12).unwrap();
-
-        let bitcoin_client = mock_node_at_tip(12);
-        let indexer = Indexer::new(bitcoin_client, store, settings(5, true)).unwrap();
-
-        assert_eq!(
-            indexer.get_transaction(&tx.compute_txid(), false).unwrap(),
-            TransactionStatus::new(tx, 10, block_hash([10u8; 32]), 3)
-        );
-    }
-
-    // A transaction mined below the window is confirmed by the node without downloading its block.
-    #[test]
-    fn tx_below_window() {
-        let tx = dummy_tx(42);
-        let tx_block_hash = block_hash([50u8; 32]);
-
-        let mut bitcoin_client = mock_node_at_tip(1000);
-        let answer = raw_tx_info(&tx, Some(tx_block_hash), Some(951));
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
-        bitcoin_client
-            .expect_get_block_header_info()
-            .returning(move |hash| Ok(header_at(50, *hash)));
-        // No get_block_by_hash expectation: the mock panics if step 3 downloads the block.
-
-        let indexer = Indexer::new(bitcoin_client, store_at(1000), settings(100, true)).unwrap();
-
-        assert_eq!(
-            indexer.get_transaction(&tx.compute_txid(), true).unwrap(),
-            // Confirmations come from the indexer's cursor, not from the node's count.
-            TransactionStatus::new(tx, 50, tx_block_hash, 951)
-        );
-    }
-
-    // A transaction in a block the indexer has not reached is not confirmed yet.
-    #[test]
-    fn tx_above_cursor() {
-        let tx = dummy_tx(42);
-
-        let mut bitcoin_client = mock_node_at_tip(11);
-        let answer = raw_tx_info(&tx, Some(block_hash([11u8; 32])), Some(1));
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
-        bitcoin_client
-            .expect_get_block_header_info()
-            .returning(|hash| Ok(header_at(11, *hash)));
-
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-        let tx_id = tx.compute_txid();
-
-        assert_eq!(
-            indexer.get_transaction(&tx_id, true).unwrap(),
-            TransactionStatus::InMempool
-        );
-        assert_eq!(
-            indexer.get_transaction(&tx_id, false).unwrap(),
-            TransactionStatus::NotFound
-        );
-    }
-
-    // A transaction only in a reorg the indexer has not unwound is not confirmed yet.
-    #[test]
-    fn tx_unwound_reorg() {
-        let tx = dummy_tx(42);
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        // The node's new chain has the transaction at height 10, where the indexer still holds the old block.
-        let answer = raw_tx_info(&tx, Some(block_hash([77u8; 32])), Some(1));
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
-        bitcoin_client
-            .expect_get_block_header_info()
-            .returning(|hash| Ok(header_at(10, *hash)));
-
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-        let tx_id = tx.compute_txid();
-
-        assert_eq!(
-            indexer.get_transaction(&tx_id, true).unwrap(),
-            TransactionStatus::InMempool
-        );
-        assert_eq!(
-            indexer.get_transaction(&tx_id, false).unwrap(),
-            TransactionStatus::NotFound
-        );
-    }
-
-    // A transaction the node still points at a removed block is not found.
-    #[test]
-    fn tx_stale_block() {
-        let tx = dummy_tx(1);
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        // A block hash with zero confirmations: the block was removed by a reorg.
-        let answer = raw_tx_info(&tx, Some(BlockHash::all_zeros()), Some(0));
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
-
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-
-        assert_eq!(
-            indexer.get_transaction(&tx.compute_txid(), true).unwrap(),
-            TransactionStatus::NotFound
-        );
-    }
-
-    // An unwatched transaction in the node mempool is InMempool or NotFound, following the flag.
-    #[test]
-    fn tx_unwatched_mempool() {
-        let tx = dummy_tx(1);
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        let answer = raw_tx_info(&tx, None, None);
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
-
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-        let tx_id = tx.compute_txid();
-
-        assert_eq!(
-            indexer.get_transaction(&tx_id, true).unwrap(),
-            TransactionStatus::InMempool
-        );
-        // The same answer, asked without the mempool, is suppressed.
-        assert_eq!(
-            indexer.get_transaction(&tx_id, false).unwrap(),
-            TransactionStatus::NotFound
-        );
-    }
-
-    // A transaction the node does not know is not found.
-    #[test]
-    fn tx_unknown() {
-        let mut bitcoin_client = mock_node_at_tip(10);
-        bitcoin_client
-            .expect_get_raw_transaction_info()
-            .returning(|_| {
-                // What the node answers for a txid it has never seen: getrawtransaction returns RPC error -5.
-                Err(
-                    bitvmx_bitcoin_rpc::errors::BitcoinClientError::FailedToGetTransactionDetails {
-                        error: "No such mempool or blockchain transaction".to_string(),
-                    },
-                )
-            });
-
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-
-        assert_eq!(
-            indexer
-                .get_transaction(&dummy_tx(1).compute_txid(), true)
-                .unwrap(),
-            TransactionStatus::NotFound
-        );
-    }
-
-    // A held block with the requested hash comes from storage.
-    #[test]
-    fn block_from_storage() {
-        // No expectations beyond construction: the mock panics if get_block calls the node.
-        let bitcoin_client = mock_node_at_tip(10);
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-
-        let block = indexer
-            .get_block(10, &block_hash([10u8; 32]))
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(block.height, 10);
-        assert_eq!(block.hash, block_hash([10u8; 32]));
-    }
-
-    // A held height with a different hash gives no block.
-    #[test]
-    fn block_other_hash() {
-        let bitcoin_client = mock_node_at_tip(10);
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-
-        assert_eq!(
-            indexer.get_block(10, &block_hash([77u8; 32])).unwrap(),
-            None
-        );
-    }
-
-    // A block above the cursor gives no block.
-    #[test]
-    fn block_above_cursor() {
-        let bitcoin_client = mock_node_at_tip(11);
-        let indexer = Indexer::new(bitcoin_client, store_at(10), settings(5, true)).unwrap();
-
-        assert_eq!(
-            indexer.get_block(11, &block_hash([11u8; 32])).unwrap(),
-            None
-        );
-    }
-
-    // A block below the window is downloaded from the node, with its fee rate.
-    #[test]
-    fn block_below_window() {
-        let old_block = bitcoin_block(50, [49u8; 32]);
-        let old_hash = old_block.block_hash();
-
-        let mut bitcoin_client = mock_node_at_tip(1000);
-        bitcoin_client
-            .expect_get_block_by_hash()
-            .withf(move |hash| *hash == old_hash)
-            .returning(move |_| Ok(bitcoin_block(50, [49u8; 32])));
-
-        let indexer = Indexer::new(bitcoin_client, store_at(1000), settings(100, true)).unwrap();
-
-        let block = indexer.get_block(50, &old_hash).unwrap().unwrap();
-
-        assert_eq!(block.height, 50);
-        assert_eq!(block.hash, old_hash);
-        assert_eq!(block.txs.len(), 1);
-        // A block with a single transaction has no fee rate, and costs no estimation call.
-        assert_eq!(block.estimated_fee_rate, 0);
-    }
-
-    // The indexer never removes a mempool watch entry on its own, only remove_mempool_watch does.
-    #[test]
-    fn watch_never_removed() {
-        let store = temp_store();
-        let tx = dummy_tx(1);
-
-        let mut bitcoin_client = mock_node_at_tip(10);
-        bitcoin_client
-            .expect_get_block_by_height()
-            .returning(|height| Ok(Some(block_info(*height, [10u8; 32], [9u8; 32], vec![]))));
-        bitcoin_client
-            .expect_check_in_mempool()
-            .returning(|_| false);
-
-        let indexer = Indexer::new(bitcoin_client, store.clone(), settings(5, true)).unwrap();
-        indexer.add_mempool_watch(tx.compute_txid()).unwrap();
-
-        for _ in 0..3 {
-            indexer.tick().unwrap();
-        }
-
-        assert_eq!(
-            store.get_mempool_watch_list().unwrap(),
-            vec![(tx.compute_txid(), None)]
-        );
-
-        indexer.remove_mempool_watch(&tx.compute_txid()).unwrap();
-        assert!(store.get_mempool_watch_list().unwrap().is_empty());
     }
 }

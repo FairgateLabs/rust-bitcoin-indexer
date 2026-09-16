@@ -131,110 +131,79 @@ mod tests {
     use crate::test_utils::dummy_tx;
     use bitvmx_bitcoin_rpc::bitcoin_client::MockBitcoinClientApi;
 
-    // A fresh start begins one window below the tip.
+    // A fresh start begins one window below the tip, and saturates at genesis on a shorter chain.
     #[test]
-    fn start_below_tip() {
+    fn start_of_window() {
+        // A long chain.
         assert_eq!(window_start(1000, 100), 900);
         assert_eq!(window_start(100, 100), 0);
-    }
 
-    // A chain shorter than the window starts at genesis instead of wrapping.
-    #[test]
-    fn start_short_chain() {
-        // Release builds wrap on overflow instead of panicking, so this has to saturate explicitly.
+        // A chain shorter than the window.
         assert_eq!(window_start(3, 100), 0);
         assert_eq!(window_start(0, 100), 0);
     }
 
-    // Confirmations count the block itself.
+    // Confirmations count the block itself and never wrap.
     #[test]
     fn confirmations_count() {
         assert_eq!(confirmations(100, 100), 1);
         assert_eq!(confirmations(100, 99), 2);
         assert_eq!(confirmations(100, 1), 100);
-    }
 
-    // A block above the cursor does not wrap the confirmation count.
-    #[test]
-    fn confirmations_no_wrap() {
+        // A block above the cursor.
         assert_eq!(confirmations(100, 101), 1);
     }
 
-    // Nothing is pruned until the window is full.
+    // Nothing is pruned until the window is full, then the block N below the cursor is.
     #[test]
-    fn prune_waits_for_full_window() {
+    fn prune_height() {
         assert_eq!(height_to_prune(99, 100), None);
         assert_eq!(height_to_prune(100, 100), Some(0));
         assert_eq!(height_to_prune(150, 100), Some(50));
     }
 
-    // A block above the cursor has not been processed, so it is not old.
+    // Only a height at or below the cursor, where the indexer holds no block, is below the window.
     #[test]
-    fn above_cursor_not_old() {
-        assert!(!is_below_window(11, 10, false));
-    }
+    fn below_window() {
+        // Below everything the indexer holds.
+        assert!(is_below_window(5, 10, false));
+        assert!(is_below_window(0, 10, false));
 
-    // A different block at a held height is a reorg the indexer has not unwound yet.
-    #[test]
-    fn held_height_not_old() {
+        // Above the cursor, not processed yet.
+        assert!(!is_below_window(11, 10, false));
+
+        // A different block at a held height, a reorg the indexer has not unwound yet.
         assert!(!is_below_window(10, 10, true));
         assert!(!is_below_window(5, 10, true));
     }
 
-    // A height below everything the indexer holds is old.
+    // The fee rate comes from the middle transaction, with a floor of 1 sat/vB and 0 when it cannot be computed.
     #[test]
-    fn below_window_old() {
-        assert!(is_below_window(5, 10, false));
-        assert!(is_below_window(0, 10, false));
-    }
-
-    // A block with few transactions has no fee rate and makes no call.
-    #[test]
-    fn fee_small_block() {
+    fn fee_rate() {
+        // A block with few transactions has no fee rate and makes no call.
         let bitcoin_client = MockBitcoinClientApi::new();
-        let txs = vec![dummy_tx(1), dummy_tx(2)];
-        assert_eq!(estimate_fee_rate(&bitcoin_client, &txs).unwrap(), 0);
-    }
+        let small_block = vec![dummy_tx(1), dummy_tx(2)];
+        assert_eq!(estimate_fee_rate(&bitcoin_client, &small_block).unwrap(), 0);
 
-    // The fee rate comes from the middle transaction of the block.
-    #[test]
-    fn fee_from_middle_tx() {
         let txs: Vec<_> = (0..7).map(dummy_tx).collect();
         let middle = txs[3].compute_txid();
+        let cases = [
+            // 0.00001 BTC is 1000 sats over 200 vB, so 5 sat/vB.
+            (serde_json::json!({ "fee": 0.00001, "vsize": 200 }), 5),
+            // Below 1 sat/vB is raised to the floor.
+            (serde_json::json!({ "fee": 0.00000001, "vsize": 200 }), 1),
+            // An answer without a fee gives no rate.
+            (serde_json::json!({ "vsize": 200 }), 0),
+        ];
 
-        let mut bitcoin_client = MockBitcoinClientApi::new();
-        bitcoin_client
-            .expect_get_raw_transaction_verbosity_two()
-            .withf(move |txid| *txid == middle)
-            .returning(|_| Ok(serde_json::json!({ "fee": 0.00001, "vsize": 200 })));
+        for (answer, expected) in cases {
+            let mut bitcoin_client = MockBitcoinClientApi::new();
+            bitcoin_client
+                .expect_get_raw_transaction_verbosity_two()
+                .withf(move |txid| *txid == middle)
+                .returning(move |_| Ok(answer.clone()));
 
-        // 0.00001 BTC is 1000 sats over 200 vB, so 5 sat/vB.
-        assert_eq!(estimate_fee_rate(&bitcoin_client, &txs).unwrap(), 5);
-    }
-
-    // A fee rate below 1 sat/vB is raised to the floor.
-    #[test]
-    fn fee_floor() {
-        let txs: Vec<_> = (0..7).map(dummy_tx).collect();
-
-        let mut bitcoin_client = MockBitcoinClientApi::new();
-        bitcoin_client
-            .expect_get_raw_transaction_verbosity_two()
-            .returning(|_| Ok(serde_json::json!({ "fee": 0.00000001, "vsize": 200 })));
-
-        assert_eq!(estimate_fee_rate(&bitcoin_client, &txs).unwrap(), 1);
-    }
-
-    // A node answer without a fee gives no rate.
-    #[test]
-    fn fee_missing() {
-        let txs: Vec<_> = (0..7).map(dummy_tx).collect();
-
-        let mut bitcoin_client = MockBitcoinClientApi::new();
-        bitcoin_client
-            .expect_get_raw_transaction_verbosity_two()
-            .returning(|_| Ok(serde_json::json!({ "vsize": 200 })));
-
-        assert_eq!(estimate_fee_rate(&bitcoin_client, &txs).unwrap(), 0);
+            assert_eq!(estimate_fee_rate(&bitcoin_client, &txs).unwrap(), expected);
+        }
     }
 }

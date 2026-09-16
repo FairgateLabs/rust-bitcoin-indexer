@@ -86,20 +86,14 @@ impl IndexerSettings {
 mod tests {
     use super::*;
 
-    // The default settings pass validation.
+    // The defaults pass validation, a retention depth below the minimum is rejected, and the minimum is accepted.
     #[test]
-    fn defaults_valid() {
-        assert!(IndexerSettings::default().validate().is_ok());
-        assert_eq!(
-            IndexerSettings::default().retention_depth,
-            DEFAULT_RETENTION_DEPTH
-        );
-        assert!(IndexerSettings::default().catch_up);
-    }
+    fn validate() {
+        let defaults = IndexerSettings::default();
+        assert!(defaults.validate().is_ok());
+        assert_eq!(defaults.retention_depth, DEFAULT_RETENTION_DEPTH);
+        assert!(defaults.catch_up);
 
-    // A retention depth below the minimum is rejected, and the minimum itself is accepted.
-    #[test]
-    fn short_window_rejected() {
         for depth in 0..MIN_RETENTION_DEPTH {
             let err = IndexerSettings::new(depth, true).validate().unwrap_err();
             assert!(matches!(err, IndexerError::InvalidConfiguration(_)));
@@ -110,32 +104,24 @@ mod tests {
             .is_ok());
     }
 
-    // A setting that no longer exists, fails to parse.
+    // Settings left out take their defaults, and a setting that no longer exists fails to parse.
     #[test]
-    fn unknown_setting_rejected() {
+    fn parse() {
+        let settings: IndexerSettings = serde_json::from_str(r#"{"retention_depth": 6}"#).unwrap();
+        assert_eq!(settings.retention_depth, 6);
+        assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
+
         let err =
             serde_json::from_str::<IndexerSettings>(r#"{"checkpoint_height": 10}"#).unwrap_err();
         assert!(err.to_string().contains("checkpoint_height"));
     }
 
-    // Settings left out of the config take their defaults.
+    // The development config loads and validates, and a missing file is an invalid configuration.
     #[test]
-    fn missing_settings_default() {
-        let settings: IndexerSettings = serde_json::from_str(r#"{"retention_depth": 6}"#).unwrap();
-        assert_eq!(settings.retention_depth, 6);
-        assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
-    }
-
-    // The development config loads and validates.
-    #[test]
-    fn dev_config_loads() {
+    fn load_config() {
         let config = IndexerConfig::load_config("config/development.yaml").unwrap();
         assert!(config.settings.validate().is_ok());
-    }
 
-    // A config file that does not exist is an invalid configuration.
-    #[test]
-    fn missing_file_invalid() {
         let err = IndexerConfig::load_config("config/does_not_exist.yaml").unwrap_err();
         assert!(matches!(err, IndexerError::InvalidConfiguration(_)));
     }
