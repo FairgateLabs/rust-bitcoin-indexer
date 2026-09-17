@@ -40,7 +40,7 @@ pub fn full_block(
     }
 }
 
-/// A store backed by a fresh directory, removed when the process exits.
+/// A store backed by a fresh directory under the system temp folder.
 pub fn temp_store() -> Rc<IndexerStore> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 

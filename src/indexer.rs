@@ -51,7 +51,7 @@ where
 
         // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
         match indexer.store.get_cursor()? {
-            // A fresh database has no subscriptions yet. Start one window below the tip.
+            // A fresh database has nothing to resume from. Start one window below the tip.
             None => {
                 info!("No cursor stored, starting at height {window_start} (tip {tip})",);
                 indexer.index_first_block(window_start)?;
@@ -76,6 +76,10 @@ where
                 info!("Resuming from height {cursor} (tip {tip})");
             }
         }
+
+        // The stored snapshot describes the mempool as the previous run left it, so nothing 
+        //in it is trusted until the first tick refreshes it.
+        indexer.store.save_mempool_snapshot(vec![])?;
 
         Ok(indexer)
     }
@@ -169,7 +173,7 @@ where
 
     /// What the indexer knows about a transaction, in three steps:
     /// 1. In a block the indexer holds, which answers from storage.
-    /// 2. Watched and in this tick's mempool snapshot, when the caller asked about the mempool.
+    /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
     /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
     ///    and one in the mempool that nobody watches.
     ///
@@ -261,9 +265,9 @@ where
                 cursor, last_block.hash, node_block.hash
             );
 
-            // The block is kept when the indexer holds no block below it to continue from.
+            // The block is kept when there is no block below it to continue from, and below genesis there is none.
             let below = cursor.saturating_sub(1);
-            if self.store.get_block(below)?.is_none() {
+            if cursor == 0 || self.store.get_block(below)?.is_none() {
                 return Err(IndexerError::ReorgDeeperThanWindow(below));
             }
 
@@ -365,7 +369,7 @@ where
                 continue;
             }
 
-            if self.bitcoin_client.check_in_mempool(tx_id) {
+            if self.bitcoin_client.check_in_mempool(tx_id)? {
                 in_mempool.push(*tx_id);
             }
         }
@@ -453,10 +457,9 @@ where
             }
         };
 
-        // Any error here means the node does not have the transaction.
-        let info = match self.bitcoin_client.get_raw_transaction_info(tx_id) {
-            Ok(info) => info,
-            Err(_) => return Ok(TransactionStatus::NotFound),
+        let info = match self.bitcoin_client.get_raw_transaction_info(tx_id)? {
+            Some(info) => info,
+            None => return Ok(TransactionStatus::NotFound),
         };
 
         // No block hash means the node holds it in its mempool.

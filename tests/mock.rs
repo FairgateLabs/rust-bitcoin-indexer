@@ -122,6 +122,33 @@ fn new_rejects_invalid_setup() {
     assert_eq!(storage.store().get_block(0).unwrap(), None);
 }
 
+// A mempool snapshot from the previous run is not used: the node answers until the first tick refreshes it.
+#[test]
+fn restart_drops_mempool_snapshot() {
+    let storage = TestStorage::new();
+    let store = storage.store();
+    let tx_id = dummy_tx(1).compute_txid();
+    store.save_block(&full_block(10, vec![])).unwrap();
+    store.save_cursor(10).unwrap();
+    store.add_mempool_watch(tx_id).unwrap();
+    store.save_mempool_snapshot(vec![tx_id]).unwrap();
+
+    // While the indexer was down the node dropped the transaction, which is what step 3 answers.
+    let mut node = mock_node(10);
+    node.expect_get_raw_transaction_info()
+        .returning(|_| Ok(None));
+
+    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+
+    assert!(!store.is_in_mempool_snapshot(&tx_id).unwrap());
+    assert_eq!(
+        indexer.get_transaction(&tx_id, true).unwrap(),
+        TransactionStatus::NotFound
+    );
+    // The watch list keeps its entries, so no node calls are added.
+    assert_eq!(store.get_mempool_watch_list().unwrap(), vec![(tx_id, None)]);
+}
+
 // A next block that does not build on the block at the cursor is not stored. This is the node switching chains.
 #[test]
 fn tick_prev_hash_mismatch() {
@@ -141,7 +168,7 @@ fn tick_prev_hash_mismatch() {
                 ..chain_block(11, vec![])
             })),
         });
-    node.expect_check_in_mempool().returning(|_| false);
+    node.expect_check_in_mempool().returning(|_| Ok(false));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
 
@@ -182,7 +209,7 @@ fn get_transaction_from_node() {
 
         let mut node = mock_node(10);
         node.expect_get_raw_transaction_info()
-            .returning(move |_| Ok(answer.clone()));
+            .returning(move |_| Ok(Some(answer.clone())));
         if let Some(height) = header_height {
             node.expect_get_block_header_info()
                 .returning(move |hash| Ok(header_at(height, *hash)));
@@ -197,22 +224,69 @@ fn get_transaction_from_node() {
         );
     }
 
-    // The header call fails, so the error is returned instead of an answer.
+    // A node that fails to answer, on the transaction lookup or on the header call,
+    // returns the error instead of NotFound.
+    for header_fails in [false, true] {
+        let storage = TestStorage::new();
+        storage.store().save_block(&full_block(10, vec![])).unwrap();
+        storage.store().save_cursor(10).unwrap();
+
+        let mut node = mock_node(10);
+        let answer = raw_tx_info(&tx, Some(block_hash(5)), Some(6));
+        node.expect_get_raw_transaction_info()
+            .returning(move |_| match header_fails {
+                true => Ok(Some(answer.clone())),
+                false => Err(rpc_error()),
+            });
+        node.expect_get_block_header_info()
+            .returning(|_| Err(rpc_error()));
+
+        let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+
+        for include_mempool in [false, true] {
+            assert!(matches!(
+                indexer.get_transaction(&tx_id, include_mempool),
+                Err(IndexerError::BitcoinClientError(_))
+            ));
+        }
+    }
+
+    // A transaction the node does not know.
     let storage = TestStorage::new();
     storage.store().save_block(&full_block(10, vec![])).unwrap();
     storage.store().save_cursor(10).unwrap();
 
     let mut node = mock_node(10);
-    let answer = raw_tx_info(&tx, Some(block_hash(5)), Some(6));
     node.expect_get_raw_transaction_info()
-        .returning(move |_| Ok(answer.clone()));
-    node.expect_get_block_header_info()
-        .returning(|_| Err(rpc_error()));
+        .returning(|_| Ok(None));
 
     let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
 
+    assert_eq!(
+        indexer.get_transaction(&tx_id, true).unwrap(),
+        TransactionStatus::NotFound
+    );
+}
+
+// A watched transaction whose mempool check fails makes the tick fail, instead of reading as not in the mempool.
+#[test]
+fn mempool_check_error() {
+    let storage = TestStorage::new();
+    let store = storage.store();
+    store.save_block(&full_block(10, vec![])).unwrap();
+    store.save_cursor(10).unwrap();
+    store.add_mempool_watch(dummy_tx(1).compute_txid()).unwrap();
+
+    let mut node = mock_node(10);
+    node.expect_get_block_by_height()
+        .returning(|height| Ok(Some(chain_block(*height, vec![]))));
+    node.expect_check_in_mempool()
+        .returning(|_| Err(rpc_error()));
+
+    let indexer = Indexer::new(node, store, settings(5, true)).unwrap();
+
     assert!(matches!(
-        indexer.get_transaction(&tx_id, true),
+        indexer.tick(),
         Err(IndexerError::BitcoinClientError(_))
     ));
 }
@@ -230,7 +304,7 @@ fn interrupted_tick_recovers() {
     let mut node = mock_node(11);
     node.expect_get_block_by_height()
         .returning(|height| Ok(Some(chain_block(*height, vec![]))));
-    node.expect_check_in_mempool().returning(|_| false);
+    node.expect_check_in_mempool().returning(|_| Ok(false));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
     assert_eq!(indexer.get_indexed_height().unwrap(), 10);
@@ -279,7 +353,7 @@ fn interrupted_tick_recovers() {
                 _ => Ok(serde_json::json!({ "fee": 0.00001, "vsize": 200 })),
             },
         );
-    node.expect_check_in_mempool().returning(|_| false);
+    node.expect_check_in_mempool().returning(|_| Ok(false));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
 
@@ -361,7 +435,9 @@ fn reorg_of_big_block() {
             ..chain_block(*height, vec![])
         }))
     });
-    node.expect_check_in_mempool().times(1).returning(|_| true);
+    node.expect_check_in_mempool()
+        .times(1)
+        .returning(|_| Ok(true));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
 

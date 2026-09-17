@@ -65,7 +65,7 @@ impl TransactionStatus {
 
     /// True once the transaction is buried deep enough for the caller to treat it as final.
     pub fn is_finalized(&self, required_confirmations: u32) -> bool {
-        self.confirmations() >= required_confirmations
+        required_confirmations > 0 && self.confirmations() >= required_confirmations
     }
 
     pub fn tx_or_err(&self) -> Result<&Transaction, IndexerError> {

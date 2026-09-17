@@ -613,7 +613,10 @@ fn double_spend_and_flip_back() -> anyhow::Result<()> {
     );
 
     // The node's transaction index still points at the removed block, with zero confirmations.
-    let info = node.client.get_raw_transaction_info(&tx_id)?;
+    let info = node
+        .client
+        .get_raw_transaction_info(&tx_id)?
+        .expect("the node still knows the transaction");
     assert_eq!(info.blockhash, Some(old_hash));
     assert_eq!(info.confirmations.unwrap_or(0), 0);
 

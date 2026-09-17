@@ -87,10 +87,10 @@ pub fn estimate_fee_rate<B: BitcoinClientApi>(
     };
 
     let vsize = match raw_tx_verbose.get("vsize").and_then(|v| v.as_u64()) {
-        Some(vsize_value) => vsize_value,
-        None => {
+        Some(vsize_value) if vsize_value > 0 => vsize_value,
+        _ => {
             error!(
-                "Can't estimate fee rate - no vsize value available for transaction {}",
+                "Can't estimate fee rate - no usable vsize value available for transaction {}",
                 tx_id
             );
             return Ok(ERROR_FEE_RATE);
@@ -194,6 +194,8 @@ mod tests {
             (serde_json::json!({ "fee": 0.00000001, "vsize": 200 }), 1),
             // An answer without a fee gives no rate.
             (serde_json::json!({ "vsize": 200 }), 0),
+            // An answer with no usable vsize gives no rate instead of dividing by zero.
+            (serde_json::json!({ "fee": 0.00001, "vsize": 0 }), 0),
         ];
 
         for (answer, expected) in cases {
