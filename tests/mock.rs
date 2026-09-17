@@ -251,6 +251,26 @@ fn get_transaction_from_node() {
         }
     }
 
+    // A transaction the node returns in a form that does not decode, mined below the window.
+    let storage = TestStorage::new();
+    storage.store().save_block(&full_block(10, vec![])).unwrap();
+    storage.store().save_cursor(10).unwrap();
+
+    let mut node = mock_node(10);
+    let mut answer = raw_tx_info(&tx, Some(block_hash(5)), Some(6));
+    answer.hex = vec![0x00];
+    node.expect_get_raw_transaction_info()
+        .returning(move |_| Ok(Some(answer.clone())));
+    node.expect_get_block_header_info()
+        .returning(|hash| Ok(header_at(5, *hash)));
+
+    let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+
+    assert!(matches!(
+        indexer.get_transaction(&tx_id, true),
+        Err(IndexerError::Internal(_))
+    ));
+
     // A transaction the node does not know.
     let storage = TestStorage::new();
     storage.store().save_block(&full_block(10, vec![])).unwrap();

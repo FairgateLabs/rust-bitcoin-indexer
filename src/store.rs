@@ -265,6 +265,25 @@ mod tests {
         let winner = full_block(11, [2u8; 32], [0u8; 32], vec![tx.clone()]);
         store.save_block(&winner).unwrap();
         assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(11));
+
+        // A height entry pointing where no block is stored is a contradiction, not an answer.
+        let orphan_entry = dummy_tx(4);
+        store
+            .save_block(&full_block(12, [3u8; 32], [2u8; 32], vec![orphan_entry.clone()]))
+            .unwrap();
+        store
+            .save_block(&full_block(12, [4u8; 32], [2u8; 32], vec![]))
+            .unwrap();
+        store.delete_block(12).unwrap();
+
+        assert_eq!(
+            store.get_tx_height(&orphan_entry.compute_txid()).unwrap(),
+            Some(12)
+        );
+        assert!(matches!(
+            store.get_indexed_tx(&orphan_entry.compute_txid()),
+            Err(IndexerError::InvariantViolation(_))
+        ));
     }
 
     // A mempool watch list can be added to, saved, and removed from.

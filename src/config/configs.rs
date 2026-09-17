@@ -111,6 +111,11 @@ mod tests {
         assert_eq!(settings.retention_depth, 6);
         assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
 
+        // An empty settings block takes every default.
+        let settings: IndexerSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.retention_depth, DEFAULT_RETENTION_DEPTH);
+        assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
+
         let err =
             serde_json::from_str::<IndexerSettings>(r#"{"checkpoint_height": 10}"#).unwrap_err();
         assert!(err.to_string().contains("checkpoint_height"));
