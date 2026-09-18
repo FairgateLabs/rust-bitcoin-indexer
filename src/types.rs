@@ -4,104 +4,149 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::IndexerError;
 
+/// A block the indexer holds.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FullBlock {
     pub height: BlockHeight,
     pub hash: BlockHash,
     pub prev_hash: BlockHash,
     pub txs: Vec<Transaction>,
-    pub orphan: bool,
-    pub estimated_fee_rate: u64, // in sat/vB
+    pub estimated_fee_rate: u64, // In sat/vB.
 }
 
+/// What the indexer knows about a transaction.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct TransactionStatus {
-    pub tx: Option<Transaction>,
-    pub block_info: Option<FullBlock>,
-    pub confirmations: u32,
-    pub status: TransactionBlockchainStatus,
+#[serde(tag = "status")]
+pub enum TransactionStatus {
+    Confirmed {
+        tx: Transaction,
+        block_height: BlockHeight,
+        block_hash: BlockHash,
+        confirmations: u32,
+    },
+    InMempool,
+    NotFound,
 }
 
 impl TransactionStatus {
+    /// A transaction confirmed in the block at this height and hash.
     pub fn new(
         tx: Transaction,
-        block_info: FullBlock,
-        status: TransactionBlockchainStatus,
+        block_height: BlockHeight,
+        block_hash: BlockHash,
         confirmations: u32,
     ) -> Self {
-        Self {
-            tx: Some(tx),
-            block_info: Some(block_info),
+        Self::Confirmed {
+            tx,
+            block_height,
+            block_hash,
             confirmations,
-            status,
         }
     }
 
-    pub fn is_finalized(&self, max_monitoring_confirmations: u32) -> bool {
-        // A transaction is considered finalized if:
-        // - The status is Finalized
-        // - The number of confirmations meets or exceeds the confirmation threshold
-        self.confirmations >= max_monitoring_confirmations
-    }
-
+    /// True when the transaction is in a block of the chain the indexer has processed.
     pub fn is_confirmed(&self) -> bool {
-        // A transaction is considered confirmed if it has been included in a block
-        // and has at least one confirmation (confirmations > 0), regardless of the exact number of confirmations.
-        // This means the transaction is in the main chain and not orphaned.
-        self.confirmations > 0 && self.status == TransactionBlockchainStatus::Confirmed
+        matches!(self, Self::Confirmed { .. })
     }
 
-    pub fn is_orphan(&self) -> bool {
-        // An orphan transaction should have:
-        //  block_info because it was mined at some point before.
-        //  confirmations == 0, this is just a validation - orphan transactions should be moved to confirmation 0.
-        //  is_orphan = true
-        //  status = Orphan
-        if let Some(block_info) = &self.block_info {
-            self.confirmations == 0
-                && block_info.orphan
-                && self.status == TransactionBlockchainStatus::Orphan
-        } else {
-            false
+    /// True when the transaction is known but not confirmed yet.
+    pub fn is_in_mempool(&self) -> bool {
+        matches!(self, Self::InMempool)
+    }
+
+    /// True when neither the indexer nor the node has the transaction.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound)
+    }
+
+    /// Confirmations of the block that contains the transaction, and zero for anything not confirmed.
+    pub fn confirmations(&self) -> u32 {
+        match self {
+            Self::Confirmed { confirmations, .. } => *confirmations,
+            _ => 0,
         }
     }
 
-    pub fn is_in_mempool(&self) -> bool {
-        self.status == TransactionBlockchainStatus::InMempool
+    /// True once the transaction is buried deep enough for the caller to treat it as final.
+    pub fn is_finalized(&self, required_confirmations: u32) -> bool {
+        required_confirmations > 0 && self.confirmations() >= required_confirmations
     }
 
-    pub fn is_not_found(&self) -> bool {
-        self.status == TransactionBlockchainStatus::NotFound
-    }
-
-    pub fn tx_id_or_error(&self) -> Result<Txid, IndexerError> {
-        let tx = self.tx_or_err()?;
-        Ok(tx.compute_txid())
-    }
-
+    /// The transaction itself, for a caller that only works with confirmed ones.
     pub fn tx_or_err(&self) -> Result<&Transaction, IndexerError> {
-        self.tx.as_ref().ok_or(IndexerError::MissingTransactionData)
+        match self {
+            Self::Confirmed { tx, .. } => Ok(tx),
+            _ => Err(IndexerError::NotConfirmed),
+        }
     }
 
-    pub fn block_info_or_err(&self) -> Result<&FullBlock, IndexerError> {
-        self.block_info
-            .as_ref()
-            .ok_or(IndexerError::MissingBlockInfo)
+    /// The txid of a confirmed transaction.
+    pub fn tx_id_or_err(&self) -> Result<Txid, IndexerError> {
+        Ok(self.tx_or_err()?.compute_txid())
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
-pub enum TransactionBlockchainStatus {
-    // Represents a transaction that has been successfully confirmed by the network but a reorganization moved it out of the chain.
-    Orphan,
-    // Represents a transaction that has been successfully confirmed by the network
-    Confirmed,
-    // Represents when the transaction was confirmed by a certain number of blocks
-    Finalized,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{block_hash, dummy_tx};
 
-    // Represents when the transaction is in mempool and not yet confirmed
-    InMempool,
+    fn confirmed(confirmations: u32) -> TransactionStatus {
+        TransactionStatus::new(dummy_tx(0), 7, block_hash([1u8; 32]), confirmations)
+    }
 
-    // Indicates that the transaction is not present in the blockchain, not in the mempool, and has not been confirmed.
-    NotFound,
+    // Every variant serializes with its name in a status field, and comes back unchanged.
+    #[test]
+    fn serde() {
+        // Confirmed puts its data next to the status field.
+        let value = serde_json::to_value(confirmed(4)).unwrap();
+        assert_eq!(value["status"], "Confirmed");
+        assert_eq!(value["confirmations"], 4);
+        assert_eq!(value["block_height"], 7);
+        assert!(value["block_hash"].is_string());
+        assert!(value["tx"].is_object());
+        assert!(value.get("block_info").is_none());
+
+        // InMempool and NotFound are the status field alone.
+        let value = serde_json::to_value(TransactionStatus::NotFound).unwrap();
+        assert_eq!(value["status"], "NotFound");
+        assert!(value.get("tx").is_none());
+
+        let value = serde_json::to_value(TransactionStatus::InMempool).unwrap();
+        assert_eq!(value["status"], "InMempool");
+
+        // Round trip of every variant.
+        for status in [
+            confirmed(2),
+            TransactionStatus::InMempool,
+            TransactionStatus::NotFound,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<TransactionStatus>(&json).unwrap(),
+                status
+            );
+        }
+    }
+
+    // Every predicate and accessor answers correctly for each variant.
+    #[test]
+    fn predicates() {
+        let status = confirmed(5);
+        assert!(status.is_confirmed());
+        assert!(!status.is_in_mempool());
+        assert!(!status.is_not_found());
+        assert_eq!(status.confirmations(), 5);
+        assert!(status.is_finalized(5));
+        assert!(!status.is_finalized(6));
+        assert!(status.tx_or_err().is_ok());
+        assert_eq!(status.tx_id_or_err().unwrap(), dummy_tx(0).compute_txid());
+
+        for other in [TransactionStatus::InMempool, TransactionStatus::NotFound] {
+            assert!(!other.is_confirmed());
+            assert_eq!(other.confirmations(), 0);
+            assert!(!other.is_finalized(1));
+            assert!(other.tx_or_err().is_err());
+        }
+    }
 }

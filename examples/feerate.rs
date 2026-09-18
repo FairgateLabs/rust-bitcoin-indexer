@@ -29,11 +29,7 @@
 //!
 
 use anyhow::Result;
-use bitcoin_indexer::{
-    config::IndexerConfig,
-    indexer::{Indexer, IndexerApi},
-    store::IndexerStore,
-};
+use bitcoin_indexer::{config::IndexerConfig, indexer::Indexer, store::IndexerStore};
 
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
@@ -47,23 +43,20 @@ use tracing::info;
 fn main() -> Result<(), anyhow::Error> {
     let config = settings::load::<IndexerConfig>()?;
 
-    let log_level = match config.log_level {
-        Some(level) => level.parse().unwrap_or(tracing::Level::INFO),
-        None => tracing::Level::INFO,
-    };
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
-    tracing_subscriber::fmt().with_max_level(log_level).init();
+    let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
 
-    let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
-
-    let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
+    let blockchain_height = bitcoin_client.get_tip_height()? as BlockHeight;
 
     let network = bitcoin_client.get_blockchain_info()?.chain;
     info!("Connected to chain {}", network);
-    info!("Chain best block at {}H", blockchain_height);
+    info!("Chain tip at height {}", blockchain_height);
     let storage = Rc::new(Storage::new(&config.storage)?);
     let indexer_store = Rc::new(IndexerStore::new(storage)?);
-    let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), config.settings)?;
+    let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), Some(config.settings))?;
 
     info!("Starting indexer loop. Press Ctrl+C to stop...");
     loop {

@@ -1,333 +1,339 @@
 use std::rc::Rc;
 
-use crate::errors::IndexerStoreError;
-use crate::types::{FullBlock, TransactionBlockchainStatus, TransactionStatus};
-use bitcoin::hash_types::BlockHash;
-use bitcoin::Transaction;
-use bitcoin::Txid;
-use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo};
+use crate::errors::IndexerError;
+use crate::types::FullBlock;
+use bitcoin::{Transaction, Txid};
+use bitvmx_bitcoin_rpc::types::BlockHeight;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
-use tracing::warn;
+
+/// One entry of the mempool watch list: a txid a consumer asked to follow, and where it stands.
+/// `None` is pending, `Some(height)` is confirmed in the block the indexer holds at that height.
+pub type MempoolWatchEntry = (Txid, Option<BlockHeight>);
+
 pub struct IndexerStore {
     store: Rc<Storage>,
 }
 
 enum StoreKey {
-    BlockByHash(BlockHash),
-    BlockByHeight(BlockHeight),
-    TransactionById(Txid),
-    BlockTxsByHash(BlockHash),
-    BestBlock,
-    CheckpointHeight,
-    MempoolWatchList,
-    MempoolCache,
+    Block(BlockHeight), // The block indexed at this height. Deleted when it leaves the retention window, and when a reorg takes it off the chain.
+    TxHeight(Txid), // Which block height holds a transaction. Written with its block and deleted with it.
+    Cursor,         // Height of the highest indexed block, which is also the highest block stored.
+    MempoolWatchList, // Txids a consumer asked to follow in the mempool, each with its confirmation height once mined.
+    MempoolSnapshot, // Which watched transactions the node held in its mempool when the last tick ended.
 }
 
 impl IndexerStore {
-    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerStoreError> {
+    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerError> {
         Ok(Self { store })
     }
 
     fn get_key(&self, key: StoreKey) -> String {
         let prefix = "indexer";
         match key {
-            StoreKey::BlockByHash(block_hash) => format!("{prefix}/block/hash/{block_hash}"),
-            StoreKey::BlockByHeight(block_height) => {
-                format!("{prefix}/block/height/{block_height}")
-            }
-            StoreKey::TransactionById(tx_id) => format!("{prefix}/block/tx/{tx_id}"),
-            StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
-            StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
-            StoreKey::CheckpointHeight => format!("{prefix}/meta/checkpoint_height"),
-            StoreKey::MempoolWatchList => format!("{prefix}/mempool/watch"),
-            StoreKey::MempoolCache => format!("{prefix}/mempool/cache"),
+            StoreKey::Block(height) => format!("{prefix}/block/{height}"),
+            StoreKey::TxHeight(tx_id) => format!("{prefix}/tx/{tx_id}"),
+            StoreKey::Cursor => format!("{prefix}/cursor"),
+            StoreKey::MempoolWatchList => format!("{prefix}/mempool_watch_list"),
+            StoreKey::MempoolSnapshot => format!("{prefix}/mempool_snapshot"),
         }
     }
-}
 
-pub trait StoreClient {
-    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn get_block_hash_by_height(
-        &self,
-        height: BlockHeight,
-    ) -> Result<Option<BlockHash>, IndexerStoreError>;
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn get_block_by_height(
-        &self,
-        height: BlockHeight,
-    ) -> Result<Option<FullBlock>, IndexerStoreError>;
-    fn save_new_best_block(
-        &self,
-        block: &BlockInfo,
-        estimated_fee_rate: u64,
-    ) -> Result<(), IndexerStoreError>;
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError>;
-
-    fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError>;
-    fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError>;
-    fn get_mempool_watch_list(&self) -> Result<Vec<Txid>, IndexerStoreError>;
-    fn is_in_mempool_watch(&self, txid: &Txid) -> Result<bool, IndexerStoreError>;
-    fn update_mempool_cache(&self, txids: Vec<Txid>) -> Result<(), IndexerStoreError>;
-    fn is_in_mempool_cache(&self, txid: &Txid) -> Result<bool, IndexerStoreError>;
-
-    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
-    fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
-    fn mark_following_blocks_as_orphan(&self, height: BlockHeight)
-        -> Result<(), IndexerStoreError>;
-    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError>;
-    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError>;
-}
-
-impl StoreClient for IndexerStore {
-    fn save_new_best_block(
-        &self,
-        block: &BlockInfo,
-        estimated_fee_rate: u64,
-    ) -> Result<(), IndexerStoreError> {
-        let existing_block_at_height = self.get_block_hash_by_height(block.height)?;
-
-        if let Some(block_hash) = existing_block_at_height {
-            // update block as an orphan.
-            let mut saved_block = match self.get_block_by_hash(&block_hash)? {
-                Some(block) => block,
-                None => return Err(IndexerStoreError::BlockNotFound),
-            };
-
-            if saved_block.hash == block.hash {
-                warn!("Block already saved at height {}", block.height);
-                // The block is on the canonical chain at this height. If a prior
-                // reorg marked it orphan and the chain re-converged, clear that
-                // stale flag so confirmation counting stays correct.
-                if saved_block.orphan {
-                    saved_block.orphan = false;
-                    let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
-                    self.store.set(key, saved_block, None)?;
-                }
-                // Advance the cursor only when this block is ahead of it, so
-                // tick() does not loop forever re-saving the same already-stored
-                // block. Compare the Option directly: this also advances from an
-                // unset cursor (None < Some(h)), including the genesis block at
-                // height 0, which unwrap_or(0) would miss since 0 > 0 is false.
-                // It never lowers the cursor, because save_new_best_block can be
-                // called with an older block and regressing the height would
-                // corrupt the cursor.
-                if self.get_best_height()? < Some(block.height) {
-                    self.save_best_height(block.height)?;
-                }
-                return Ok(());
-            }
-
-            saved_block.orphan = true;
-
-            // save previous block as an orphan.
-            let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
-            self.store.set(key, saved_block, None)?;
+    /// Stores a block and the height entry of each of its transactions.
+    pub fn save_block(&self, block: &FullBlock) -> Result<(), IndexerError> {
+        for tx in &block.txs {
+            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()));
+            self.store.set(key, block.height, None)?;
         }
 
-        //Create new entry for the new block
-        let new_block = FullBlock {
-            height: block.height,
-            hash: block.hash,
-            prev_hash: block.prev_hash,
-            txs: block.txs.clone(),
-            orphan: false,
-            estimated_fee_rate,
+        let key = self.get_key(StoreKey::Block(block.height));
+        self.store.set(key, block, None)?;
+
+        Ok(())
+    }
+
+    /// Deletes the block at this height together with the height entries of its transactions.
+    pub fn delete_block(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let block = match self.get_block(height)? {
+            Some(block) => block,
+            None => return Ok(()),
         };
 
-        // 1. Save the block itself under its hash.
-
-        let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
-
-        self.store.set(block_key, new_block, None)?;
-        // 2. Save the block hash by its height. This operation updates the best block at each height,
-        // ensuring that all best blocks at a given height are stored.
-        let height_key = self.get_key(StoreKey::BlockByHeight(block.height));
-        self.store.set(height_key, block.hash, None)?;
-
-        // 3. Save block hash under each transaction ID (this is to know if tx exists).
         for tx in &block.txs {
-            let tx_key = self.get_key(StoreKey::TransactionById(tx.compute_txid()));
-            self.store.set(tx_key, (tx, block.hash), None)?;
+            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()));
+            self.store.remove(key, None)?;
         }
 
-        // 4. Save transactions IDs by block hash.
-        let txs_key = self.get_key(StoreKey::BlockTxsByHash(block.hash));
-        self.store.set(txs_key, &block.txs, None)?;
-
-        // 5. Update the best block height if this is the latest block.
-        self.save_best_height(block.height)?;
+        let key = self.get_key(StoreKey::Block(height));
+        self.store.remove(key, None)?;
 
         Ok(())
     }
 
-    // Retrieve the height of the best block.
-    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerStoreError> {
-        let best_block_height = self.get_best_height()?;
-
-        if best_block_height.is_none() {
-            return Ok(None);
-        }
-
-        match self.get_block_hash_by_height(best_block_height.unwrap())? {
-            Some(block_hash) => match self.get_block_by_hash(&block_hash)? {
-                Some(block) => Ok(Some(block)),
-                None => Err(IndexerStoreError::BlockNotFound),
-            },
-            None => Err(IndexerStoreError::BlockNotFound),
-        }
+    /// Retrieves the block at this height, if the indexer still holds it.
+    pub fn get_block(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
+        let key = self.get_key(StoreKey::Block(height));
+        Ok(self.store.get(key, None)?)
     }
 
-    // Retrieve the block hash by height.
-    fn get_block_hash_by_height(
+    /// Retrieves the block at this height. Fails with `BlockNotFound` when the indexer does not hold it.
+    pub fn get_block_or_err(&self, height: BlockHeight) -> Result<FullBlock, IndexerError> {
+        self.get_block(height)?
+            .ok_or(IndexerError::BlockNotFound(height))
+    }
+
+    /// Height of the block that holds this transaction, if the indexer still holds that block.
+    pub fn get_tx_height(&self, tx_id: &Txid) -> Result<Option<BlockHeight>, IndexerError> {
+        let key = self.get_key(StoreKey::TxHeight(*tx_id));
+        Ok(self.store.get(key, None)?)
+    }
+
+    /// The transaction and the block that holds it, if the indexer holds that block.
+    pub fn get_indexed_tx(
         &self,
-        height: BlockHeight,
-    ) -> Result<Option<BlockHash>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BlockByHeight(height));
-        let block_hash: Option<BlockHash> = self.store.get(key, None)?;
-        Ok(block_hash)
+        tx_id: &Txid,
+    ) -> Result<Option<(Transaction, FullBlock)>, IndexerError> {
+        let height = match self.get_tx_height(tx_id)? {
+            Some(height) => height,
+            None => return Ok(None),
+        };
+
+        let block = self.get_block(height)?.ok_or_else(|| {
+            IndexerError::InvariantViolation(format!(
+                "transaction {tx_id} points at height {height}, where no block is stored"
+            ))
+        })?;
+
+        let tx = block
+            .txs
+            .iter()
+            .find(|tx| tx.compute_txid() == *tx_id)
+            .cloned()
+            .ok_or_else(|| {
+                IndexerError::InvariantViolation(format!(
+                    "transaction {tx_id} points at height {height}, whose block does not contain it"
+                ))
+            })?;
+
+        Ok(Some((tx, block)))
     }
 
-    // Retrieve the block by its hash.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BlockByHash(*hash));
-        let block: Option<FullBlock> = self.store.get(key, None)?;
-        Ok(block)
+    /// Retrieves the height of the block at the cursor, if any.
+    pub fn get_cursor(&self) -> Result<Option<BlockHeight>, IndexerError> {
+        let key = self.get_key(StoreKey::Cursor);
+        Ok(self.store.get(key, None)?)
     }
 
-    fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::TransactionById(*tx_id));
-        let tx_data = self
-            .store
-            .get::<&str, (Transaction, BlockHash)>(&key, None)?;
-
-        if let Some((tx, block_hash)) = tx_data {
-            let block_info = match self.get_block_by_hash(&block_hash)? {
-                Some(block) => block,
-                None => return Err(IndexerStoreError::BlockNotFound),
-            };
-
-            let best_block_height = self.get_best_height()?.unwrap_or(0);
-
-            let mut confirmations = best_block_height
-                .saturating_sub(block_info.height)
-                .saturating_add(1);
-
-            // If the block is orphaned or its height is greater than the best block height,
-            // this indicates a reorg or block invalidation where the blockchain has reverted.
-            let status = if block_info.orphan || block_info.height > best_block_height {
-                confirmations = 0;
-                TransactionBlockchainStatus::Orphan
-            } else {
-                TransactionBlockchainStatus::Confirmed // Will be updated in indexer based on confirmations and threshold
-            };
-
-            Ok(Some(TransactionStatus {
-                tx: Some(tx),
-                block_info: Some(block_info),
-                confirmations,
-                status,
-            }))
-        } else {
-            Ok(None)
-        }
+    /// Retrieves the height of the block at the cursor. Fails when the cursor was never saved.
+    pub fn get_cursor_or_err(&self) -> Result<BlockHeight, IndexerError> {
+        self.get_cursor()?.ok_or_else(|| {
+            IndexerError::InvariantViolation("the cursor was never saved".to_string())
+        })
     }
 
-    fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
-        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
-        if !list.contains(&txid) {
-            list.push(txid);
-            self.store.set(key, list, None)?;
-        }
+    /// Saves the height of the block at the cursor.
+    pub fn save_cursor(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let key = self.get_key(StoreKey::Cursor);
+        self.store.set(key, height, None)?;
         Ok(())
     }
 
-    fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
-        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
-        list.retain(|t| t != txid);
-        self.store.set(key, list, None)?;
-        Ok(())
-    }
-
-    fn get_mempool_watch_list(&self) -> Result<Vec<Txid>, IndexerStoreError> {
+    /// Retrieves the list of watched txids and their confirmation heights.
+    pub fn get_mempool_watch_list(&self) -> Result<Vec<MempoolWatchEntry>, IndexerError> {
         let key = self.get_key(StoreKey::MempoolWatchList);
         Ok(self.store.get(key, None)?.unwrap_or_default())
     }
 
-    fn is_in_mempool_watch(&self, txid: &Txid) -> Result<bool, IndexerStoreError> {
-        Ok(self.get_mempool_watch_list()?.contains(txid))
-    }
-
-    fn update_mempool_cache(&self, txids: Vec<Txid>) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolCache);
-        self.store.set(key, txids, None)?;
+    /// Saves the list of watched txids and their confirmation heights.
+    pub fn save_mempool_watch_list(
+        &self,
+        list: Vec<MempoolWatchEntry>,
+    ) -> Result<(), IndexerError> {
+        let key = self.get_key(StoreKey::MempoolWatchList);
+        self.store.set(key, list, None)?;
         Ok(())
     }
 
-    fn is_in_mempool_cache(&self, txid: &Txid) -> Result<bool, IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolCache);
+    /// Adds a txid to the mempool watch list as pending.
+    pub fn add_mempool_watch(&self, tx_id: Txid) -> Result<(), IndexerError> {
+        let mut list = self.get_mempool_watch_list()?;
+
+        // If the txid is already being watched, do not add it again.
+        if list.iter().any(|(watched, _)| *watched == tx_id) {
+            return Ok(());
+        }
+
+        list.push((tx_id, None));
+        self.save_mempool_watch_list(list)
+    }
+
+    /// Removes a txid from the mempool watch list.
+    pub fn remove_mempool_watch(&self, tx_id: &Txid) -> Result<(), IndexerError> {
+        let mut list = self.get_mempool_watch_list()?;
+        list.retain(|(watched, _)| watched != tx_id);
+        self.save_mempool_watch_list(list)
+    }
+
+    /// Saves the list of txids the node held in its mempool when the last tick ended.
+    pub fn save_mempool_snapshot(&self, tx_ids: Vec<Txid>) -> Result<(), IndexerError> {
+        let key = self.get_key(StoreKey::MempoolSnapshot);
+        self.store.set(key, tx_ids, None)?;
+        Ok(())
+    }
+
+    /// Checks whether a txid is in the list of txids the node held in its mempool.
+    pub fn is_in_mempool_snapshot(&self, tx_id: &Txid) -> Result<bool, IndexerError> {
+        let key = self.get_key(StoreKey::MempoolSnapshot);
         let list: Vec<Txid> = self.store.get(key, None)?.unwrap_or_default();
-        Ok(list.contains(txid))
+        Ok(list.contains(tx_id))
     }
+}
 
-    fn get_block_by_height(
-        &self,
-        height: BlockHeight,
-    ) -> Result<Option<FullBlock>, IndexerStoreError> {
-        let hash = self.get_block_hash_by_height(height)?;
+#[cfg(test)]
+mod tests {
+    use crate::errors::IndexerError;
+    use crate::test_utils::{dummy_tx, full_block, temp_store};
 
-        if let Some(hash) = hash {
-            let block = self.get_block_by_hash(&hash)?;
-            Ok(block)
-        } else {
-            Ok(None)
+    // Blocks are saved and deleted together with the height entries of their transactions.
+    #[test]
+    fn blocks() {
+        let store = temp_store();
+        let block = full_block(10, [1u8; 32], [0u8; 32], vec![dummy_tx(1), dummy_tx(2)]);
+
+        // A read that must succeed fails with BlockNotFound before the block is saved.
+        assert!(matches!(
+            store.get_block_or_err(10),
+            Err(IndexerError::BlockNotFound(10))
+        ));
+
+        // A saved block comes back, with a height entry for each of its transactions.
+        store.save_block(&block).unwrap();
+        assert_eq!(store.get_block(10).unwrap(), Some(block.clone()));
+        assert_eq!(store.get_block_or_err(10).unwrap(), block);
+        for tx in &block.txs {
+            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(10));
         }
-    }
 
-    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BestBlock);
-        let height: Option<BlockHeight> = self.store.get(key, None)?;
-        Ok(height)
-    }
-
-    fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::BestBlock);
-        self.store.set(key, height, None)?;
-        Ok(())
-    }
-
-    fn mark_following_blocks_as_orphan(
-        &self,
-        start_height_to_mark: BlockHeight,
-    ) -> Result<(), IndexerStoreError> {
-        let best_height = self.get_best_height()?.unwrap_or(0);
-
-        let mut current_height = start_height_to_mark;
-
-        while current_height <= best_height {
-            if let Some(mut block) = self.get_block_by_height(current_height)? {
-                block.orphan = true;
-
-                let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
-                self.store.set(block_key, block, None)?;
-            }
-
-            current_height += 1;
+        // Deleting it deletes the height entries too.
+        store.delete_block(10).unwrap();
+        assert_eq!(store.get_block(10).unwrap(), None);
+        for tx in &block.txs {
+            assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), None);
         }
-        Ok(())
+
+        // Deleting a height with no block is not an error.
+        assert!(store.delete_block(42).is_ok());
     }
 
-    fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::CheckpointHeight);
-        let height = self.store.get(key, None)?;
-        Ok(height)
+    // A cursor read that must succeed fails until the cursor is saved.
+    #[test]
+    fn cursor() {
+        let store = temp_store();
+        assert_eq!(store.get_cursor().unwrap(), None);
+        assert!(matches!(
+            store.get_cursor_or_err(),
+            Err(IndexerError::InvariantViolation(_))
+        ));
+
+        store.save_cursor(7).unwrap();
+        assert_eq!(store.get_cursor().unwrap(), Some(7));
+        assert_eq!(store.get_cursor_or_err().unwrap(), 7);
     }
 
-    fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::CheckpointHeight);
-        self.store.set(key, height, None)?;
-        Ok(())
+    // An indexed transaction comes back with the block that holds it, and follows the block that is kept after a reorg.
+    #[test]
+    fn indexed_tx() {
+        let store = temp_store();
+        let tx = dummy_tx(1);
+        let block = full_block(10, [1u8; 32], [0u8; 32], vec![dummy_tx(2), tx.clone()]);
+        store.save_block(&block).unwrap();
+
+        // A held transaction, and one that was never indexed.
+        assert_eq!(
+            store.get_indexed_tx(&tx.compute_txid()).unwrap(),
+            Some((tx.clone(), block))
+        );
+        assert_eq!(
+            store.get_indexed_tx(&dummy_tx(3).compute_txid()).unwrap(),
+            None
+        );
+
+        // The block that loses a reorg is deleted before the winning one is stored, whatever their heights.
+        store.delete_block(10).unwrap();
+        assert_eq!(store.get_indexed_tx(&tx.compute_txid()).unwrap(), None);
+
+        let winner = full_block(11, [2u8; 32], [0u8; 32], vec![tx.clone()]);
+        store.save_block(&winner).unwrap();
+        assert_eq!(store.get_tx_height(&tx.compute_txid()).unwrap(), Some(11));
+
+        // A height entry pointing where no block is stored is a contradiction, not an answer.
+        let orphan_entry = dummy_tx(4);
+        store
+            .save_block(&full_block(
+                12,
+                [3u8; 32],
+                [2u8; 32],
+                vec![orphan_entry.clone()],
+            ))
+            .unwrap();
+        store
+            .save_block(&full_block(12, [4u8; 32], [2u8; 32], vec![]))
+            .unwrap();
+        store.delete_block(12).unwrap();
+
+        assert_eq!(
+            store.get_tx_height(&orphan_entry.compute_txid()).unwrap(),
+            Some(12)
+        );
+        assert!(matches!(
+            store.get_indexed_tx(&orphan_entry.compute_txid()),
+            Err(IndexerError::InvariantViolation(_))
+        ));
+    }
+
+    // A mempool watch list can be added to, saved, and removed from.
+    #[test]
+    fn mempool_watch_list() {
+        let store = temp_store();
+        let first = dummy_tx(1).compute_txid();
+        let second = dummy_tx(2).compute_txid();
+
+        // Add a txid to the mempool watch list, and it comes back as pending.
+        store.add_mempool_watch(first).unwrap();
+        store.add_mempool_watch(first).unwrap();
+        assert_eq!(store.get_mempool_watch_list().unwrap(), vec![(first, None)]);
+
+        // Save a confirmation height for it, and it comes back with that height.
+        store
+            .save_mempool_watch_list(vec![(first, Some(9))])
+            .unwrap();
+        store.add_mempool_watch(first).unwrap();
+        assert_eq!(
+            store.get_mempool_watch_list().unwrap(),
+            vec![(first, Some(9))]
+        );
+
+        // Add a second txid, and remove the first one by txid.
+        store.add_mempool_watch(second).unwrap();
+        store.remove_mempool_watch(&first).unwrap();
+        assert_eq!(
+            store.get_mempool_watch_list().unwrap(),
+            vec![(second, None)]
+        );
+    }
+
+    // Each save replaces the whole mempool snapshot.
+    #[test]
+    fn mempool_snapshot() {
+        let store = temp_store();
+        let first = dummy_tx(1).compute_txid();
+        let second = dummy_tx(2).compute_txid();
+
+        store.save_mempool_snapshot(vec![first]).unwrap();
+        assert!(store.is_in_mempool_snapshot(&first).unwrap());
+
+        store.save_mempool_snapshot(vec![second]).unwrap();
+        assert!(!store.is_in_mempool_snapshot(&first).unwrap());
+        assert!(store.is_in_mempool_snapshot(&second).unwrap());
     }
 }
