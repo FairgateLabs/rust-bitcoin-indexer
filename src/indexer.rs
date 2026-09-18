@@ -77,7 +77,7 @@ where
             }
         }
 
-        // The stored snapshot describes the mempool as the previous run left it, so nothing 
+        // The stored snapshot describes the mempool as the previous run left it, so nothing
         //in it is trusted until the first tick refreshes it.
         indexer.store.save_mempool_snapshot(vec![])?;
 

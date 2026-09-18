@@ -269,7 +269,12 @@ mod tests {
         // A height entry pointing where no block is stored is a contradiction, not an answer.
         let orphan_entry = dummy_tx(4);
         store
-            .save_block(&full_block(12, [3u8; 32], [2u8; 32], vec![orphan_entry.clone()]))
+            .save_block(&full_block(
+                12,
+                [3u8; 32],
+                [2u8; 32],
+                vec![orphan_entry.clone()],
+            ))
             .unwrap();
         store
             .save_block(&full_block(12, [4u8; 32], [2u8; 32], vec![]))
