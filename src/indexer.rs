@@ -88,7 +88,7 @@ where
     // Public API
     // =========================================================================
 
-    /// True once the indexer has read every block the node has.
+    /// True once the cursor has reached the node's tip, so there is nothing left to read.
     pub fn is_ready(&self) -> Result<bool, IndexerError> {
         Ok(self.get_indexed_height()? >= self.bitcoin_client.get_tip_height()?)
     }

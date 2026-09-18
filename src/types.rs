@@ -29,6 +29,7 @@ pub enum TransactionStatus {
 }
 
 impl TransactionStatus {
+    /// A transaction confirmed in the block at this height and hash.
     pub fn new(
         tx: Transaction,
         block_height: BlockHeight,
@@ -43,14 +44,17 @@ impl TransactionStatus {
         }
     }
 
+    /// True when the transaction is in a block of the chain the indexer has processed.
     pub fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed { .. })
     }
 
+    /// True when the transaction is known but not confirmed yet.
     pub fn is_in_mempool(&self) -> bool {
         matches!(self, Self::InMempool)
     }
 
+    /// True when neither the indexer nor the node has the transaction.
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound)
     }
@@ -68,6 +72,7 @@ impl TransactionStatus {
         required_confirmations > 0 && self.confirmations() >= required_confirmations
     }
 
+    /// The transaction itself, for a caller that only works with confirmed ones.
     pub fn tx_or_err(&self) -> Result<&Transaction, IndexerError> {
         match self {
             Self::Confirmed { tx, .. } => Ok(tx),
@@ -75,6 +80,7 @@ impl TransactionStatus {
         }
     }
 
+    /// The txid of a confirmed transaction.
     pub fn tx_id_or_err(&self) -> Result<Txid, IndexerError> {
         Ok(self.tx_or_err()?.compute_txid())
     }
