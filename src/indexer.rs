@@ -7,6 +7,7 @@ use crate::{
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
+use std::cell::Cell;
 use std::rc::Rc;
 use tracing::{info, warn};
 
@@ -18,6 +19,8 @@ where
     bitcoin_client: B,
     store: Rc<IndexerStore>,
     settings: IndexerSettings,
+    /// Whether the startup has run. The node is only read from tick, so the first one places the cursor.
+    started: Cell<bool>,
 }
 
 impl<B> Indexer<B>
@@ -32,56 +35,16 @@ where
         let settings = settings.unwrap_or_default();
         settings.validate()?;
 
-        // Fee estimation and get_transaction both look a transaction up by its id alone, which only the
-        // node's transaction index can answer. Fail here instead of on the first query that needs it.
-        if !bitcoin_client.is_txindex_enabled()? {
-            return Err(IndexerError::InvalidConfiguration(
-                "the bitcoin node must run with -txindex".to_string(),
-            ));
-        }
+        // The stored snapshot describes the mempool as the previous run left it, so nothing
+        // in it is trusted until the first tick refreshes it.
+        store.save_mempool_snapshot(vec![])?;
 
-        let indexer = Self {
+        Ok(Self {
             bitcoin_client,
             store,
             settings,
-        };
-
-        let tip = indexer.bitcoin_client.get_tip_height()?;
-        let window_start = window_start(tip, indexer.settings.retention_depth);
-
-        // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
-        match indexer.store.get_cursor()? {
-            // A fresh database has nothing to resume from. Start one window below the tip.
-            None => {
-                info!("No cursor stored, starting at height {window_start} (tip {tip})",);
-                indexer.index_first_block(window_start)?;
-            }
-            // A restart that is catching up from a stored cursor reads every block in between.
-            Some(cursor) if indexer.settings.catch_up => {
-                info!("Resuming from height {cursor} (tip {tip})");
-            }
-            // A restart that is not catching up jumps straight to tip - retention_depth.
-            Some(cursor) if window_start > cursor.saturating_add(1) => {
-                warn!(
-                    "catch_up is disabled, skipping blocks {}..={}. Output pattern and spending UTXO events in that range are lost",
-                    cursor.saturating_add(1),
-                    window_start.saturating_sub(1)
-                );
-
-                indexer.delete_window(cursor)?;
-                indexer.index_first_block(window_start)?;
-            }
-            // A restart that is not catching up, but the cursor is already at or above tip - retention_depth, so no blocks are skipped.
-            Some(cursor) => {
-                info!("Resuming from height {cursor} (tip {tip})");
-            }
-        }
-
-        // The stored snapshot describes the mempool as the previous run left it, so nothing
-        //in it is trusted until the first tick refreshes it.
-        indexer.store.save_mempool_snapshot(vec![])?;
-
-        Ok(indexer)
+            started: Cell::new(false),
+        })
     }
 
     // =========================================================================
@@ -90,15 +53,19 @@ where
 
     /// True once the cursor has reached the node's tip, so there is nothing left to read.
     pub fn is_ready(&self) -> Result<bool, IndexerError> {
-        Ok(self.get_indexed_height()? >= self.bitcoin_client.get_tip_height()?)
+        let Some(cursor) = self.store.get_cursor()? else {
+            return Ok(false);
+        };
+
+        Ok(cursor >= self.bitcoin_client.get_tip_height()?)
     }
 
-    /// Height of the highest block the indexer has read. Always present once the indexer is built.
+    /// Height of the highest block the indexer has read. Fails with `NotSynced` until the first tick places the cursor.
     pub fn get_indexed_height(&self) -> Result<BlockHeight, IndexerError> {
-        self.store.get_cursor_or_err()
+        self.store.get_cursor()?.ok_or(IndexerError::NotSynced)
     }
 
-    /// The highest block the indexer has read. Always present once the indexer is built.
+    /// The highest block the indexer has read. Always present once the first tick has run.
     pub fn get_last_indexed_block(&self) -> Result<FullBlock, IndexerError> {
         self.store.get_block_or_err(self.get_indexed_height()?)
     }
@@ -239,10 +206,59 @@ where
     // Private helpers
     // =========================================================================
 
+    /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart that is
+    /// not catching up jumps there when blocks would be skipped. Returns whether it indexed a block.
+    /// True when the indexer is ready, false when it has to catch up.
+    fn start(&self, tip: BlockHeight) -> Result<bool, IndexerError> {
+        let window_start = window_start(tip, self.settings.retention_depth);
+
+        // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
+        match self.store.get_cursor()? {
+            // A fresh database has nothing to resume from. Start one window below the tip.
+            None => {
+                info!("No cursor stored, starting at height {window_start} (tip {tip})");
+                self.index_first_block(window_start)?;
+                Ok(true)
+            }
+            // A restart that is catching up from a stored cursor reads every block in between.
+            Some(cursor) if self.settings.catch_up => {
+                info!("Resuming from height {cursor} (tip {tip})");
+                Ok(false)
+            }
+            // A restart that is not catching up jumps straight to tip - retention_depth.
+            Some(cursor) if window_start > cursor.saturating_add(1) => {
+                warn!(
+                    "catch_up is disabled, skipping blocks {}..={}. Output pattern and spending UTXO events in that range are lost",
+                    cursor.saturating_add(1),
+                    window_start.saturating_sub(1)
+                );
+
+                self.delete_window(cursor)?;
+                self.index_first_block(window_start)?;
+                Ok(true)
+            }
+            // A restart that is not catching up, but the cursor is already at or above tip - retention_depth, so no blocks are skipped.
+            Some(cursor) => {
+                info!("Resuming from height {cursor} (tip {tip})");
+                Ok(false)
+            }
+        }
+    }
+
     /// Moves the indexer at most one block. Returns true only when a block was added.
     fn advance(&self) -> Result<bool, IndexerError> {
-        let cursor = self.get_indexed_height()?;
         let tip = self.bitcoin_client.get_tip_height()?;
+
+        if !self.started.get() {
+            let indexed = self.start(tip)?;
+            self.started.set(true);
+
+            if indexed {
+                return Ok(true);
+            }
+        }
+
+        let cursor = self.get_indexed_height()?;
 
         // The node's chain is shorter than the indexed one.
         if cursor > tip {

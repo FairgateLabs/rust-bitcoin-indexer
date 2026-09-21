@@ -99,18 +99,12 @@ fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderResult {
     .expect("a getblockheader answer")
 }
 
-// Invalid setups are refused before anything is written.
+// A retention depth below the minimum is refused, and building the indexer never reads the node.
 #[test]
 fn new_rejects_invalid_setup() {
     let storage = TestStorage::new();
 
-    // A node without -txindex.
-    let mut node = MockBitcoinClientApi::new();
-    node.expect_is_txindex_enabled().returning(|| Ok(false));
-    let result = Indexer::new(node, storage.store(), settings(5, true));
-    assert!(matches!(result, Err(IndexerError::InvalidConfiguration(_))));
-
-    // A retention depth below the minimum. The node has no expectations, so asking it anything panics.
+    // The node has no expectations, so asking it anything panics.
     let result = Indexer::new(
         MockBitcoinClientApi::new(),
         storage.store(),
@@ -118,8 +112,20 @@ fn new_rejects_invalid_setup() {
     );
     assert!(matches!(result, Err(IndexerError::InvalidConfiguration(_))));
 
+    // A valid setup builds without a single node call, and places no cursor until the first tick.
+    let indexer = Indexer::new(
+        MockBitcoinClientApi::new(),
+        storage.store(),
+        settings(5, true),
+    )
+    .unwrap();
+
     assert_eq!(storage.store().get_cursor().unwrap(), None);
     assert_eq!(storage.store().get_block(0).unwrap(), None);
+    assert!(matches!(
+        indexer.get_indexed_height(),
+        Err(IndexerError::NotSynced)
+    ));
 }
 
 // A mempool snapshot from the previous run is not used: the node answers until the first tick refreshes it.
@@ -327,15 +333,14 @@ fn interrupted_tick_recovers() {
     node.expect_check_in_mempool().returning(|_| Ok(false));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
-    assert_eq!(indexer.get_indexed_height().unwrap(), 10);
 
     assert!(indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 11);
     assert_eq!(store.get_block(11).unwrap(), Some(full_block(11, vec![])));
     drop(indexer);
 
-    // A crash on the very first start, after block 0 was written and before the cursor was saved: a start with no
-    // cursor is a fresh start, which writes block 0 again and saves the cursor.
+    // A crash on the very first start, after block 0 was written and before the cursor was saved: the first tick
+    // finds no cursor, which is a fresh start, and writes block 0 again with its cursor.
     let storage = TestStorage::new();
     let store = storage.store();
     store.save_block(&full_block(0, vec![])).unwrap();
@@ -345,6 +350,8 @@ fn interrupted_tick_recovers() {
         .returning(|height| Ok(Some(chain_block(*height, vec![]))));
 
     let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+
+    assert!(indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 0);
     assert_eq!(store.get_block(0).unwrap(), Some(full_block(0, vec![])));
     drop(indexer);

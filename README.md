@@ -26,7 +26,9 @@ This library is currently under development and may not be fully stable. It is n
 
 **The cursor** is the height of the highest block the indexer has read. It always has a block stored, and everything is counted from it: confirmations, what is inside the window, and what still has to be read.
 
-**One tick** reads the node's tip and the block at the cursor, then does exactly one of:
+**Building an indexer reads nothing from the node.** The first `tick()` places the cursor: a fresh database starts one window below the tip, a restart resumes from its cursor, and a restart with `catch_up` disabled jumps to one window below the tip when that skips blocks. Until then `is_ready` is false and anything counted from the cursor fails with `NotSynced`.
+
+**Every later tick** reads the node's tip and the block at the cursor, then does exactly one of:
 
 1. the node's chain is shorter than the indexed one, so the blocks above its tip are removed;
 2. the node has a different block at the cursor, so that block is removed and the cursor steps back;
@@ -42,9 +44,9 @@ The `Indexer` struct exposes:
 
 | Method | Purpose |
 |---|---|
-| `new` | Build from an RPC client, a store and optional settings. Starts a fresh database one window below the tip. |
-| `is_ready` | True once the cursor has reached the node's tip, so there is nothing left to read. |
-| `tick` | Advance at most one block and refresh the mempool watch list. |
+| `new` | Build from an RPC client, a store and optional settings. Validates the settings and reads nothing from the node. |
+| `is_ready` | True once the cursor has reached the node's tip, so there is nothing left to read. False before the first tick. |
+| `tick` | Place the cursor on the first call, then advance at most one block and refresh the mempool watch list. |
 | `get_indexed_height` | Height of the highest block read. |
 | `get_last_indexed_block` | That block, with its transactions and fee rate. |
 | `get_block` | The block with a given height and hash, from storage or from the node. |

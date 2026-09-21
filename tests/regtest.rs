@@ -53,6 +53,15 @@ fn fresh_start() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let indexer = node.indexer(storage.store(), 5, true)?;
 
+    // Until the first tick there is no cursor, so nothing can be answered from it.
+    assert!(!indexer.is_ready()?);
+    assert!(matches!(
+        indexer.get_indexed_height(),
+        Err(IndexerError::NotSynced)
+    ));
+
+    // The first tick places the cursor, here at genesis because the chain is shorter than the window.
+    assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 0);
     assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(0)?);
     assert!(!indexer.is_ready()?);
@@ -71,6 +80,7 @@ fn fresh_start() -> anyhow::Result<()> {
     let store = storage.store();
     let indexer = node.indexer(store.clone(), 5, true)?;
 
+    assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 15);
     assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(15)?);
     assert_eq!(store.get_block(14)?, None);
@@ -90,12 +100,14 @@ fn restart_catch_up() -> anyhow::Result<()> {
     let store = storage.store();
 
     let indexer = node.indexer(store.clone(), 3, true)?;
+    assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 98);
     node.sync(&indexer)?;
     drop(indexer);
 
     // A restart with the cursor at the tip has nothing to do.
     let indexer = node.indexer(store.clone(), 3, true)?;
+    assert!(!indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 101);
     assert!(!indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 101);
@@ -104,7 +116,6 @@ fn restart_catch_up() -> anyhow::Result<()> {
     // A gap longer than the window: every block is indexed, and only the last window stays stored.
     node.mine(10)?;
     let indexer = node.indexer(store.clone(), 3, true)?;
-    assert_eq!(indexer.get_indexed_height()?, 101);
     assert!(!indexer.is_ready()?);
 
     let mut indexed = 0;
@@ -140,14 +151,17 @@ fn restart_jump() -> anyhow::Result<()> {
     let store = storage.store();
 
     let indexer = node.indexer(store.clone(), 3, false)?;
+    assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 107);
     node.sync(&indexer)?;
     drop(indexer);
 
-    // Four new blocks with a window of 3: the window starts right after the cursor, so nothing is skipped.
+    // Four new blocks with a window of 3: the window starts right after the cursor, so nothing is skipped and the
+    // first tick reads the next block instead of jumping.
     node.mine(4)?;
     let indexer = node.indexer(store.clone(), 3, false)?;
-    assert_eq!(indexer.get_indexed_height()?, 110);
+    assert!(indexer.tick()?);
+    assert_eq!(indexer.get_indexed_height()?, 111);
     node.sync(&indexer)?;
 
     // A watched transaction confirmed in the window.
@@ -161,6 +175,7 @@ fn restart_jump() -> anyhow::Result<()> {
     node.mine(10)?;
     let indexer = node.indexer(store.clone(), 3, false)?;
 
+    assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 121);
     for height in 112..=114 {
         assert_eq!(store.get_block(height)?, None);
@@ -372,7 +387,7 @@ fn chain_shrinks() -> anyhow::Result<()> {
     // the transaction's locktime to 110, so it can only be mined again from height 111.
     node.invalidate(111)?;
     let indexer = node.indexer(store.clone(), 10, true)?;
-    assert_eq!(indexer.get_indexed_height()?, 111);
+    assert_eq!(store.get_cursor()?, Some(111));
 
     assert!(!indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 110);

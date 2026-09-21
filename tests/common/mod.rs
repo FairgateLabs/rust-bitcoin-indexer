@@ -273,20 +273,27 @@ impl TestNode {
         Ok((high_fee, low_fee))
     }
 
-    /// Ticks until the indexer holds the node's tip block.
+    /// Ticks until the indexer holds the node's tip block. The first tick is what places the cursor.
     pub fn sync(&self, indexer: &IndexerType) -> anyhow::Result<()> {
         for _ in 0..MAX_SYNC_TICKS {
+            indexer.tick()?;
+
             if self.is_synced(indexer)? {
                 return Ok(());
             }
-            indexer.tick()?;
         }
         anyhow::bail!("the indexer did not reach the node's tip")
     }
 
     /// True when the indexer's last block is the node's tip block, which also catches a reorg at the same height.
+    /// False before the first tick, when there is no cursor yet.
     pub fn is_synced(&self, indexer: &IndexerType) -> anyhow::Result<bool> {
-        let height = indexer.get_indexed_height()?;
+        let height = match indexer.get_indexed_height() {
+            Ok(height) => height,
+            Err(IndexerError::NotSynced) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+
         Ok(height == self.tip()?
             && indexer.get_last_indexed_block()?.hash == self.hash_at(height)?)
     }
