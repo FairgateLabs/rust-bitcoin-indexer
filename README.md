@@ -50,7 +50,8 @@ The `Indexer` struct exposes:
 | `get_indexed_height` | Height of the highest block read. |
 | `get_last_indexed_block` | That block, with its transactions and fee rate. |
 | `get_block` | The block with a given height and hash, from storage or from the node. |
-| `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. |
+| `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node when the indexer holds nothing. |
+| `get_stored_transaction` | The same status, from the indexer alone. |
 | `get_estimated_fee_rate` | Fee rate of the last indexed block, once the indexer is at the tip. |
 | `add_mempool_watch` / `remove_mempool_watch` | Register or drop a txid to follow in the mempool. |
 | `rpc_is_utxo_unspent` / `rpc_get_tx_confirmations` | Live node checks, passed straight through. |
@@ -64,6 +65,8 @@ Methods with the `rpc_` prefix answer from the node alone, with none of the inde
 1. **A block the indexer holds.** Answers `Confirmed` with the transaction, its block's height and hash, and the confirmations counted from the cursor.
 2. **The mempool snapshot**, when `include_mempool` is true and the txid is on the watch list. Answers `InMempool`.
 3. **The node**, which covers a transaction mined below the window and one in the mempool that nobody watches. It answers `Confirmed` only for a block below everything the indexer holds. A transaction in a block the indexer has not reached yet, or in a block it has not unwound yet, is reported as pending: `InMempool` when `include_mempool` is true, `NotFound` when it is false.
+
+`get_stored_transaction(txid, include_mempool)` stops after step 2, for a caller that wants no node call and reads `NotFound` as "the indexer holds nothing about it".
 
 `get_block(height, hash)` follows the same idea: a block the indexer holds is returned when the hash matches, a block below the window is downloaded from the node when the node has that hash at that height, and anything the indexer has not processed yet gives `None`.
 

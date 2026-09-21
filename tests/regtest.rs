@@ -675,11 +675,16 @@ fn mempool_watch() -> anyhow::Result<()> {
     node.sync(&indexer)?;
 
     // An unwatched transaction in the mempool is answered by the node, and the flag decides whether it is reported.
+    // The indexer holds nothing about it, since only watched txids reach the snapshot.
     let unwatched = node.send(10_000)?;
     for tick in [false, true] {
         if tick {
             indexer.tick()?;
         }
+        assert_eq!(
+            indexer.get_stored_transaction(&unwatched, true)?,
+            TransactionStatus::NotFound
+        );
         assert_eq!(
             indexer.get_transaction(&unwatched, true)?,
             TransactionStatus::InMempool
@@ -767,21 +772,29 @@ fn window_boundary() -> anyhow::Result<()> {
     node.mine(3)?;
     node.sync(&indexer)?;
 
-    // Block 111 is the oldest of the three held blocks.
+    // Block 111 is the oldest of the three held blocks, so the indexer answers on its own.
     assert_eq!(store.get_tx_height(&tx_id)?, Some(111));
     for include_mempool in [false, true] {
+        assert_eq!(
+            indexer.get_stored_transaction(&tx_id, include_mempool)?,
+            confirmed(&node, &tx_id, 111, 3)?
+        );
         assert_eq!(
             indexer.get_transaction(&tx_id, include_mempool)?,
             confirmed(&node, &tx_id, 111, 3)?
         );
     }
 
-    // One more block prunes it, and the node answers.
+    // One more block prunes it. The indexer no longer holds it, and only the node can answer.
     node.mine(1)?;
     node.sync(&indexer)?;
     assert_eq!(store.get_block(111)?, None);
     assert_eq!(store.get_tx_height(&tx_id)?, None);
     for include_mempool in [false, true] {
+        assert_eq!(
+            indexer.get_stored_transaction(&tx_id, include_mempool)?,
+            TransactionStatus::NotFound
+        );
         assert_eq!(
             indexer.get_transaction(&tx_id, include_mempool)?,
             confirmed(&node, &tx_id, 111, 4)?

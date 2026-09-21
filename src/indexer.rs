@@ -138,14 +138,12 @@ where
         self.store.remove_mempool_watch(tx_id)
     }
 
-    /// What the indexer knows about a transaction, in three steps:
+    /// What the indexer holds about a transaction, without asking the node:
     /// 1. In a block the indexer holds, which answers from storage.
     /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
-    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
-    ///    and one in the mempool that nobody watches.
     ///
-    /// `include_mempool` suppresses mempool answers from the indexer's snapshot, it does not stop the node being asked.
-    pub fn get_transaction(
+    /// `NotFound` means the indexer holds nothing about it, not that the transaction does not exist.
+    pub fn get_stored_transaction(
         &self,
         tx_id: &Txid,
         include_mempool: bool,
@@ -165,7 +163,25 @@ where
             return Ok(TransactionStatus::InMempool);
         }
 
-        self.get_transaction_from_node(tx_id, include_mempool)
+        Ok(TransactionStatus::NotFound)
+    }
+
+    /// What the indexer knows about a transaction, in three steps:
+    /// 1. In a block the indexer holds, which answers from storage.
+    /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
+    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
+    ///    and one in the mempool that nobody watches.
+    ///
+    /// `include_mempool` suppresses mempool answers from the indexer's snapshot, it does not stop the node being asked.
+    pub fn get_transaction(
+        &self,
+        tx_id: &Txid,
+        include_mempool: bool,
+    ) -> Result<TransactionStatus, IndexerError> {
+        match self.get_stored_transaction(tx_id, include_mempool)? {
+            TransactionStatus::NotFound => self.get_transaction_from_node(tx_id, include_mempool),
+            status => Ok(status),
+        }
     }
 
     /// Fee rate estimated from the most recently indexed block.
