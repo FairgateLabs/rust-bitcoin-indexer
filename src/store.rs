@@ -6,6 +6,7 @@ use bitcoin::hash_types::BlockHash;
 use bitcoin::Transaction;
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::types::{BlockHeight, BlockInfo};
+use storage_backend::key::StorageKey;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
 use tracing::warn;
@@ -29,19 +30,54 @@ impl IndexerStore {
         Ok(Self { store })
     }
 
-    fn get_key(&self, key: StoreKey) -> String {
-        let prefix = "indexer";
+    /// Owns the shared "indexer" component prefix so it can't drift between
+    /// the namespace-specific helpers below.
+    fn indexer_key<'a>(
+        component: &str,
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, IndexerStoreError> {
+        Ok(StorageKey::new(
+            ["indexer", component]
+                .into_iter()
+                .map(str::to_string)
+                .chain(tail.into_iter().map(str::to_string)),
+        )?)
+    }
+
+    fn block_key<'a>(
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, IndexerStoreError> {
+        Self::indexer_key("block", tail)
+    }
+
+    fn meta_key<'a>(
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, IndexerStoreError> {
+        Self::indexer_key("meta", tail)
+    }
+
+    fn mempool_key<'a>(
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, IndexerStoreError> {
+        Self::indexer_key("mempool", tail)
+    }
+
+    fn get_key(&self, key: StoreKey) -> Result<StorageKey, IndexerStoreError> {
         match key {
-            StoreKey::BlockByHash(block_hash) => format!("{prefix}/block/hash/{block_hash}"),
-            StoreKey::BlockByHeight(block_height) => {
-                format!("{prefix}/block/height/{block_height}")
+            StoreKey::BlockByHash(block_hash) => {
+                Self::block_key(["hash", block_hash.to_string().as_str()])
             }
-            StoreKey::TransactionById(tx_id) => format!("{prefix}/block/tx/{tx_id}"),
-            StoreKey::BlockTxsByHash(block_hash) => format!("{prefix}/block/{block_hash}/txs"),
-            StoreKey::BestBlock => format!("{prefix}/meta/best_block_height"),
-            StoreKey::CheckpointHeight => format!("{prefix}/meta/checkpoint_height"),
-            StoreKey::MempoolWatchList => format!("{prefix}/mempool/watch"),
-            StoreKey::MempoolCache => format!("{prefix}/mempool/cache"),
+            StoreKey::BlockByHeight(block_height) => {
+                Self::block_key(["height", block_height.to_string().as_str()])
+            }
+            StoreKey::TransactionById(tx_id) => Self::block_key(["tx", tx_id.to_string().as_str()]),
+            StoreKey::BlockTxsByHash(block_hash) => {
+                Self::block_key([block_hash.to_string().as_str(), "txs"])
+            }
+            StoreKey::BestBlock => Self::meta_key(["best_block_height"]),
+            StoreKey::CheckpointHeight => Self::meta_key(["checkpoint_height"]),
+            StoreKey::MempoolWatchList => Self::mempool_key(["watch"]),
+            StoreKey::MempoolCache => Self::mempool_key(["cache"]),
         }
     }
 }
@@ -101,7 +137,7 @@ impl StoreClient for IndexerStore {
                 // stale flag so confirmation counting stays correct.
                 if saved_block.orphan {
                     saved_block.orphan = false;
-                    let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
+                    let key = self.get_key(StoreKey::BlockByHash(saved_block.hash))?;
                     self.store.set(key, saved_block, None)?;
                 }
                 // Advance the cursor only when this block is ahead of it, so
@@ -121,7 +157,7 @@ impl StoreClient for IndexerStore {
             saved_block.orphan = true;
 
             // save previous block as an orphan.
-            let key = self.get_key(StoreKey::BlockByHash(saved_block.hash));
+            let key = self.get_key(StoreKey::BlockByHash(saved_block.hash))?;
             self.store.set(key, saved_block, None)?;
         }
 
@@ -137,22 +173,22 @@ impl StoreClient for IndexerStore {
 
         // 1. Save the block itself under its hash.
 
-        let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
+        let block_key = self.get_key(StoreKey::BlockByHash(block.hash))?;
 
         self.store.set(block_key, new_block, None)?;
         // 2. Save the block hash by its height. This operation updates the best block at each height,
         // ensuring that all best blocks at a given height are stored.
-        let height_key = self.get_key(StoreKey::BlockByHeight(block.height));
+        let height_key = self.get_key(StoreKey::BlockByHeight(block.height))?;
         self.store.set(height_key, block.hash, None)?;
 
         // 3. Save block hash under each transaction ID (this is to know if tx exists).
         for tx in &block.txs {
-            let tx_key = self.get_key(StoreKey::TransactionById(tx.compute_txid()));
+            let tx_key = self.get_key(StoreKey::TransactionById(tx.compute_txid()))?;
             self.store.set(tx_key, (tx, block.hash), None)?;
         }
 
         // 4. Save transactions IDs by block hash.
-        let txs_key = self.get_key(StoreKey::BlockTxsByHash(block.hash));
+        let txs_key = self.get_key(StoreKey::BlockTxsByHash(block.hash))?;
         self.store.set(txs_key, &block.txs, None)?;
 
         // 5. Update the best block height if this is the latest block.
@@ -183,23 +219,21 @@ impl StoreClient for IndexerStore {
         &self,
         height: BlockHeight,
     ) -> Result<Option<BlockHash>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BlockByHeight(height));
+        let key = self.get_key(StoreKey::BlockByHeight(height))?;
         let block_hash: Option<BlockHash> = self.store.get(key, None)?;
         Ok(block_hash)
     }
 
     // Retrieve the block by its hash.
     fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BlockByHash(*hash));
+        let key = self.get_key(StoreKey::BlockByHash(*hash))?;
         let block: Option<FullBlock> = self.store.get(key, None)?;
         Ok(block)
     }
 
     fn get_tx_info(&self, tx_id: &Txid) -> Result<Option<TransactionStatus>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::TransactionById(*tx_id));
-        let tx_data = self
-            .store
-            .get::<&str, (Transaction, BlockHash)>(&key, None)?;
+        let key = self.get_key(StoreKey::TransactionById(*tx_id))?;
+        let tx_data = self.store.get::<(Transaction, BlockHash)>(key, None)?;
 
         if let Some((tx, block_hash)) = tx_data {
             let block_info = match self.get_block_by_hash(&block_hash)? {
@@ -234,8 +268,8 @@ impl StoreClient for IndexerStore {
     }
 
     fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
-        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
+        let key = self.get_key(StoreKey::MempoolWatchList)?;
+        let mut list: Vec<Txid> = self.store.get(key.clone(), None)?.unwrap_or_default();
         if !list.contains(&txid) {
             list.push(txid);
             self.store.set(key, list, None)?;
@@ -244,15 +278,15 @@ impl StoreClient for IndexerStore {
     }
 
     fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
-        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
+        let key = self.get_key(StoreKey::MempoolWatchList)?;
+        let mut list: Vec<Txid> = self.store.get(key.clone(), None)?.unwrap_or_default();
         list.retain(|t| t != txid);
         self.store.set(key, list, None)?;
         Ok(())
     }
 
     fn get_mempool_watch_list(&self) -> Result<Vec<Txid>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
+        let key = self.get_key(StoreKey::MempoolWatchList)?;
         Ok(self.store.get(key, None)?.unwrap_or_default())
     }
 
@@ -261,13 +295,13 @@ impl StoreClient for IndexerStore {
     }
 
     fn update_mempool_cache(&self, txids: Vec<Txid>) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolCache);
+        let key = self.get_key(StoreKey::MempoolCache)?;
         self.store.set(key, txids, None)?;
         Ok(())
     }
 
     fn is_in_mempool_cache(&self, txid: &Txid) -> Result<bool, IndexerStoreError> {
-        let key = self.get_key(StoreKey::MempoolCache);
+        let key = self.get_key(StoreKey::MempoolCache)?;
         let list: Vec<Txid> = self.store.get(key, None)?.unwrap_or_default();
         Ok(list.contains(txid))
     }
@@ -287,13 +321,13 @@ impl StoreClient for IndexerStore {
     }
 
     fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::BestBlock);
+        let key = self.get_key(StoreKey::BestBlock)?;
         let height: Option<BlockHeight> = self.store.get(key, None)?;
         Ok(height)
     }
 
     fn save_best_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::BestBlock);
+        let key = self.get_key(StoreKey::BestBlock)?;
         self.store.set(key, height, None)?;
         Ok(())
     }
@@ -310,7 +344,7 @@ impl StoreClient for IndexerStore {
             if let Some(mut block) = self.get_block_by_height(current_height)? {
                 block.orphan = true;
 
-                let block_key = self.get_key(StoreKey::BlockByHash(block.hash));
+                let block_key = self.get_key(StoreKey::BlockByHash(block.hash))?;
                 self.store.set(block_key, block, None)?;
             }
 
@@ -320,13 +354,13 @@ impl StoreClient for IndexerStore {
     }
 
     fn get_checkpoint_height(&self) -> Result<Option<BlockHeight>, IndexerStoreError> {
-        let key = self.get_key(StoreKey::CheckpointHeight);
+        let key = self.get_key(StoreKey::CheckpointHeight)?;
         let height = self.store.get(key, None)?;
         Ok(height)
     }
 
     fn save_checkpoint_height(&self, height: BlockHeight) -> Result<(), IndexerStoreError> {
-        let key = self.get_key(StoreKey::CheckpointHeight);
+        let key = self.get_key(StoreKey::CheckpointHeight)?;
         self.store.set(key, height, None)?;
         Ok(())
     }

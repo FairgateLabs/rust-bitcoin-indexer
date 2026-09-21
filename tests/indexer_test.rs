@@ -9,6 +9,7 @@ use bitcoin_indexer::{
 use bitcoind::bitcoind::Bitcoind;
 use bitvmx_bitcoin_rpc::bitcoin_client::{BitcoinClient, BitcoinClientApi};
 use bitvmx_settings::settings;
+use storage_backend::key::StorageKey;
 use storage_backend::storage::KeyValueStore;
 mod utils;
 use crate::utils::{clear_output, wait_for_port_available};
@@ -951,11 +952,10 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
 
     // Step 2: Manually corrupt storage by deleting block hash entry for height 80
     // while keeping best height metadata intact
-    let corrupted_key = format!("indexer/block/height/80");
+    let corrupted_key = StorageKey::new(["indexer", "block", "height", "80"])?;
 
     // Delete the block hash at height 80 directly from storage
-    //use storage_backend::storage::KeyValueStore;
-    storage.remove(&corrupted_key, None)?;
+    storage.remove(corrupted_key, None)?;
 
     // Verify that best height is still 80 but hash is missing
     assert_eq!(store.get_best_height()?, Some(80));
