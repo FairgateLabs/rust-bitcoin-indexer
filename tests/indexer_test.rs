@@ -952,7 +952,7 @@ fn test_database_corrupted_missing_block_hash_for_height() -> Result<(), anyhow:
 
     // Step 2: Manually corrupt storage by deleting block hash entry for height 80
     // while keeping best height metadata intact
-    let corrupted_key = StorageKey::new(["indexer", "block", "height", "80"]);
+    let corrupted_key = StorageKey::new(["indexer", "block", "height", "80"])?;
 
     // Delete the block hash at height 80 directly from storage
     storage.remove(corrupted_key, None)?;

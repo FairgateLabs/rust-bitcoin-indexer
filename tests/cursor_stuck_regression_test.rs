@@ -205,7 +205,7 @@ fn cursor_advances_from_unset_for_genesis_block() -> Result<(), anyhow::Error> {
     // Simulate a crash that wrote the block but not the cursor: clear the
     // best-height key directly. This key mirrors StoreKey::BestBlock in store.rs.
     storage.remove(
-        StorageKey::new(["indexer", "meta", "best_block_height"]),
+        StorageKey::new(["indexer", "meta", "best_block_height"])?,
         None,
     )?;
     assert_eq!(
