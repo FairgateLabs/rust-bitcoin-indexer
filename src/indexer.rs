@@ -9,6 +9,7 @@ use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
 use std::cell::Cell;
 use std::rc::Rc;
+use storage_backend::storage::Storage;
 use tracing::{info, warn};
 
 /// Turns the node's stateless RPC into a stateful, resumable, reorg aware sequential feed.
@@ -29,11 +30,13 @@ where
 {
     pub fn new(
         bitcoin_client: B,
-        store: Rc<IndexerStore>,
+        storage: Rc<Storage>,
         settings: Option<IndexerSettings>,
     ) -> Result<Self, IndexerError> {
         let settings = settings.unwrap_or_default();
         settings.validate()?;
+
+        let store = Rc::new(IndexerStore::new(storage)?);
 
         // The stored snapshot describes the mempool as the previous run left it, so nothing
         // in it is trusted until the first tick refreshes it.

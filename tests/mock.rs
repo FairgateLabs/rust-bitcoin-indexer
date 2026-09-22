@@ -107,7 +107,7 @@ fn new_rejects_invalid_setup() {
     // The node has no expectations, so asking it anything panics.
     let result = Indexer::new(
         MockBitcoinClientApi::new(),
-        storage.store(),
+        storage.storage(),
         settings(1, true),
     );
     assert!(matches!(result, Err(IndexerError::InvalidConfiguration(_))));
@@ -115,7 +115,7 @@ fn new_rejects_invalid_setup() {
     // A valid setup builds without a single node call, and places no cursor until the first tick.
     let indexer = Indexer::new(
         MockBitcoinClientApi::new(),
-        storage.store(),
+        storage.storage(),
         settings(5, true),
     )
     .unwrap();
@@ -144,7 +144,7 @@ fn restart_drops_mempool_snapshot() {
     node.expect_get_raw_transaction_info()
         .returning(|_| Ok(None));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(!store.is_in_mempool_snapshot(&tx_id).unwrap());
     assert_eq!(
@@ -176,7 +176,7 @@ fn tick_prev_hash_mismatch() {
         });
     node.expect_check_in_mempool().returning(|_| Ok(false));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(!indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 10);
@@ -221,7 +221,7 @@ fn get_transaction_from_node() {
                 .returning(move |hash| Ok(header_at(height, *hash)));
         }
 
-        let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+        let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
         assert_eq!(indexer.get_transaction(&tx_id, true).unwrap(), with_mempool);
         assert_eq!(
@@ -247,7 +247,7 @@ fn get_transaction_from_node() {
         node.expect_get_block_header_info()
             .returning(|_| Err(rpc_error()));
 
-        let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+        let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
         for include_mempool in [false, true] {
             assert!(matches!(
@@ -270,7 +270,7 @@ fn get_transaction_from_node() {
     node.expect_get_block_header_info()
         .returning(|hash| Ok(header_at(5, *hash)));
 
-    let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(matches!(
         indexer.get_transaction(&tx_id, true),
@@ -286,7 +286,7 @@ fn get_transaction_from_node() {
     node.expect_get_raw_transaction_info()
         .returning(|_| Ok(None));
 
-    let indexer = Indexer::new(node, storage.store(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert_eq!(
         indexer.get_transaction(&tx_id, true).unwrap(),
@@ -309,7 +309,7 @@ fn mempool_check_error() {
     node.expect_check_in_mempool()
         .returning(|_| Err(rpc_error()));
 
-    let indexer = Indexer::new(node, store, settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(matches!(
         indexer.tick(),
@@ -332,7 +332,7 @@ fn interrupted_tick_recovers() {
         .returning(|height| Ok(Some(chain_block(*height, vec![]))));
     node.expect_check_in_mempool().returning(|_| Ok(false));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 11);
@@ -349,7 +349,7 @@ fn interrupted_tick_recovers() {
     node.expect_get_block_by_height()
         .returning(|height| Ok(Some(chain_block(*height, vec![]))));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 0);
@@ -382,7 +382,7 @@ fn interrupted_tick_recovers() {
         );
     node.expect_check_in_mempool().returning(|_| Ok(false));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(matches!(
         indexer.tick(),
@@ -417,7 +417,7 @@ fn inconsistent_storage_errors() {
     store.save_cursor(10).unwrap();
 
     // No block reads are expected: the indexer must fail before asking the node for one.
-    let indexer = Indexer::new(mock_node(12), store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(mock_node(12), storage.storage(), settings(5, true)).unwrap();
 
     assert!(matches!(
         indexer.tick(),
@@ -466,7 +466,7 @@ fn reorg_of_big_block() {
         .times(1)
         .returning(|_| Ok(true));
 
-    let indexer = Indexer::new(node, store.clone(), settings(5, true)).unwrap();
+    let indexer = Indexer::new(node, storage.storage(), settings(5, true)).unwrap();
 
     assert!(!indexer.tick().unwrap());
     assert_eq!(indexer.get_indexed_height().unwrap(), 9);

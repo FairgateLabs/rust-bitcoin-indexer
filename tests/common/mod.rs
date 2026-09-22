@@ -57,10 +57,10 @@ pub fn settings(retention_depth: BlockHeight, catch_up: bool) -> Option<IndexerS
 // Storage
 // =============================================================================
 
-/// An indexer store under `temp-runs/`, removed when this value is dropped.
+/// Storage under `temp-runs/`, removed when this value is dropped.
 pub struct TestStorage {
     path: String,
-    store: Option<Rc<IndexerStore>>,
+    storage: Option<Rc<Storage>>,
 }
 
 impl TestStorage {
@@ -70,16 +70,21 @@ impl TestStorage {
 
         let storage =
             Rc::new(Storage::new(&StorageConfig::new(path.clone(), None)).expect("test storage"));
-        let store = Rc::new(IndexerStore::new(storage).expect("test store"));
 
         Self {
             path,
-            store: Some(store),
+            storage: Some(storage),
         }
     }
 
+    /// What the indexer is built from.
+    pub fn storage(&self) -> Rc<Storage> {
+        Rc::clone(self.storage.as_ref().expect("test storage already removed"))
+    }
+
+    /// A store over the same storage, to read what the indexer wrote.
     pub fn store(&self) -> Rc<IndexerStore> {
-        Rc::clone(self.store.as_ref().expect("test store already removed"))
+        Rc::new(IndexerStore::new(self.storage()).expect("test store"))
     }
 }
 
@@ -91,7 +96,7 @@ impl Default for TestStorage {
 
 impl Drop for TestStorage {
     fn drop(&mut self) {
-        self.store.take();
+        self.storage.take();
         std::thread::sleep(std::time::Duration::from_millis(100));
         let _ = std::fs::remove_dir_all(&self.path);
     }
@@ -150,12 +155,12 @@ impl TestNode {
     /// An indexer on this node, with its own RPC client.
     pub fn indexer(
         &self,
-        store: Rc<IndexerStore>,
+        storage: Rc<Storage>,
         retention_depth: BlockHeight,
         catch_up: bool,
     ) -> Result<IndexerType, IndexerError> {
         let client = BitcoinClient::new_from_config(&self.rpc_config)?;
-        Indexer::new(client, store, settings(retention_depth, catch_up))
+        Indexer::new(client, storage, settings(retention_depth, catch_up))
     }
 
     pub fn tip(&self) -> anyhow::Result<BlockHeight> {

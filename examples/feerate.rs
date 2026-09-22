@@ -29,7 +29,7 @@
 //!
 
 use anyhow::Result;
-use bitcoin_indexer::{config::IndexerConfig, indexer::Indexer, store::IndexerStore};
+use bitcoin_indexer::{config::IndexerConfig, indexer::Indexer};
 
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
@@ -55,8 +55,7 @@ fn main() -> Result<(), anyhow::Error> {
     info!("Connected to chain {}", network);
     info!("Chain tip at height {}", blockchain_height);
     let storage = Rc::new(Storage::new(&config.storage)?);
-    let indexer_store = Rc::new(IndexerStore::new(storage)?);
-    let indexer = Indexer::new(bitcoin_client, indexer_store.clone(), Some(config.settings))?;
+    let indexer = Indexer::new(bitcoin_client, storage, Some(config.settings))?;
 
     info!("Starting indexer loop. Press Ctrl+C to stop...");
     loop {
