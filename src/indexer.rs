@@ -18,10 +18,9 @@ where
     B: BitcoinClientApi,
 {
     bitcoin_client: B,
-    store: Rc<IndexerStore>,
+    store: IndexerStore,
     settings: IndexerSettings,
-    /// Whether the startup has run. The node is only read from tick, so the first one places the cursor.
-    started: Cell<bool>,
+    started: Cell<bool>, // Whether the startup has run. The node is only read from tick, so the first one places the cursor.
 }
 
 impl<B> Indexer<B>
@@ -36,7 +35,7 @@ where
         let settings = settings.unwrap_or_default();
         settings.validate()?;
 
-        let store = Rc::new(IndexerStore::new(storage)?);
+        let store = IndexerStore::new(storage)?;
 
         // The stored snapshot describes the mempool as the previous run left it, so nothing
         // in it is trusted until the first tick refreshes it.
