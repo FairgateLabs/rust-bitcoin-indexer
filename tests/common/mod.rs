@@ -8,7 +8,8 @@ use std::sync::{Mutex, MutexGuard};
 use bitcoin::{
     absolute, transaction, Address, Amount, Block, BlockHash, Network, OutPoint, Transaction, Txid,
 };
-use bitcoin_indexer::{Indexer, IndexerError, IndexerSettings, IndexerStore, IndexerType};
+use bitcoin_indexer::store::IndexerStore;
+use bitcoin_indexer::{Indexer, IndexerError, IndexerSettings, IndexerType};
 use bitcoincore_rpc::json::CreateRawTransactionInput;
 use bitcoincore_rpc::RpcApi;
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};

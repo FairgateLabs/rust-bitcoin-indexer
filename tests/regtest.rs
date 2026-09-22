@@ -3,7 +3,8 @@ mod common;
 use common::*;
 
 use bitcoin::{Block, Transaction, Txid};
-use bitcoin_indexer::{IndexerError, IndexerStore, TransactionStatus};
+use bitcoin_indexer::store::IndexerStore;
+use bitcoin_indexer::{IndexerError, TransactionStatus};
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::BlockHeight};
 
 /// The transaction as the node has it.
