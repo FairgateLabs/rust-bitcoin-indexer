@@ -1,85 +1,26 @@
 use crate::{
     config::IndexerSettings,
     errors::IndexerError,
-    store::{IndexerStore, StoreClient},
-    types::{FullBlock, TransactionBlockchainStatus, TransactionStatus},
+    helper::{confirmations, estimate_fee_rate, height_to_prune, is_below_window, window_start},
+    store::IndexerStore,
+    types::{FullBlock, TransactionStatus},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
+use std::cell::Cell;
 use std::rc::Rc;
-use tracing::{error, info, warn};
+use storage_backend::storage::Storage;
+use tracing::{info, warn};
+
+/// Turns the node's stateless RPC into a stateful, resumable, reorg aware sequential feed.
 pub struct Indexer<B>
 where
     B: BitcoinClientApi,
 {
-    pub bitcoin_client: B,
-    pub store: Rc<IndexerStore>,
-    pub settings: IndexerSettings,
-}
-
-pub trait IndexerApi {
-    /// Checks if the indexer has indexed the entire blockchain and is at the latest block.
-    /// Returns `Ok(true)` if ready, `Ok(false)` if not, or an `IndexerError` if an error occurs.
-    fn is_ready(&self) -> Result<bool, IndexerError>;
-
-    /// Processes the next block in the blockchain.
-    /// Returns `Ok(())` if successful, or an `IndexerError` if an error occurs during processing.
-    fn tick(&self) -> Result<(), IndexerError>;
-
-    /// Retrieves the best (most recent) block that has been indexed.
-    /// Returns `Ok(Some(FullBlock))` if a block is found, `Ok(None)` if no block was indexed, or an `IndexerError` if an error occurs.
-    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError>;
-
-    /// Retrieves the height of the best (most recent) block that has been indexed.
-    /// Returns `Ok(Some(BlockHeight))` if a height is found, `Ok(None)` if no block is indexed, or an `IndexerError` if an error occurs.
-    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError>;
-
-    /// Retrieves the current best block height from the Bitcoin blockchain.
-    /// Returns `Ok(BlockHeight)` with the current blockchain height, or an `IndexerError` if an error occurs.
-    fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError>;
-
-    /// Retrieves a block by its height.
-    /// Returns `Ok(Some(FullBlock))` if the block is found, `Ok(None)` if not found, or an `IndexerError` if an error occurs.
-    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError>;
-
-    // Retrieves a block by its hash.
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError>;
-
-    /// Register a txid to be polled in the mempool during each `tick()`.
-    fn add_mempool_watch(&self, txid: Txid) -> Result<(), IndexerError>;
-
-    /// Remove a txid from the mempool watch list.
-    fn remove_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerError>;
-
-    fn refresh_mempool_cache(&self) -> Result<(), IndexerError>;
-
-    /// Retrieves transaction information for a given transaction ID.
-    /// Returns `Ok(TransactionInfo)` with the transaction status, or an `IndexerError` if an error occurs.
-    /// If the transaction is not found, returns `TransactionInfo` with `TransactionBlockchainStatus::NotFound`.
-    /// If `search_in_mempool` is true, the transaction will be searched in the mempool if it is not found in the indexed chain.
-    /// If `search_in_mempool` is false, the transaction will only be searched in the indexed chain.
-    fn get_transaction(
-        &self,
-        tx_id: &Txid,
-        search_in_mempool: bool,
-    ) -> Result<TransactionStatus, IndexerError>;
-
-    /// Retrieves the estimated fee rate from the most recently indexed block.
-    /// Returns `Ok(u64)` with the fee rate in satoshis per virtual byte (sat/vB), or an `IndexerError` if an error occurs or the indexer is not synced.
-    fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError>;
-
-    /// Real-time RPC check for UTXO spendability. Bypasses indexer cache. Returns true iff the UTXO is unspent
-    /// (in chain OR mempool when `include_mempool` is true, chain-only when false).
-    fn is_utxo_unspent_rpc(
-        &self,
-        txid: &Txid,
-        vout: u32,
-        include_mempool: bool,
-    ) -> Result<bool, IndexerError>;
-
-    /// Live `getrawtransaction` confirmation probe (requires `-txindex`). Returns `None` if the node
-    /// does not know the tx, `Some(0)` if in the mempool, `Some(n>=1)` if confirmed with `n` confs.
-    fn get_tx_confirmations(&self, txid: &Txid) -> Result<Option<u32>, IndexerError>;
+    bitcoin_client: B,
+    store: IndexerStore,
+    settings: IndexerSettings,
+    started: Cell<bool>, // Whether the startup has run. The node is only read from tick, so the first one places the cursor.
 }
 
 impl<B> Indexer<B>
@@ -88,711 +29,530 @@ where
 {
     pub fn new(
         bitcoin_client: B,
-        store: Rc<IndexerStore>,
+        storage: Rc<Storage>,
         settings: Option<IndexerSettings>,
     ) -> Result<Self, IndexerError> {
         let settings = settings.unwrap_or_default();
+        settings.validate()?;
 
-        // The highest block height that has already been synchronized and stored in the storage.
-        let indexed_height = store.get_best_height()?;
+        let store = IndexerStore::new(storage)?;
 
-        // The current block height of the Bitcoin network.
-        let blockchain_height = bitcoin_client.get_best_block()? as BlockHeight;
-
-        let height_to_sync;
-
-        match indexed_height {
-            Some(indexer_height) => {
-                info!("Last indexed block is {:?}H", indexer_height);
-                // Here we have to validate that the indexed_height is correct against the blockchain_height
-                if blockchain_height < indexer_height {
-                    error!(
-                        "Blockchain height is behind the indexed height. BlockchainHeight({}), IndexedHeight({})",
-                        blockchain_height,
-                        indexer_height
-                    );
-                    return Err(IndexerError::InconsistentBlockchain);
-                } else {
-                    // We have to validate that the hash of the indexed_height is correct
-                    let blockchain_block = bitcoin_client.get_block_by_height(&indexer_height)?;
-
-                    if blockchain_block.is_none() {
-                        return Err(IndexerError::InconsistentBlockchain);
-                    }
-
-                    let blockchain_block_hash = blockchain_block.unwrap().hash;
-                    let indexed_block_hash = store.get_block_hash_by_height(indexer_height)?;
-
-                    if indexed_block_hash.is_none() {
-                        return Err(IndexerError::DatabaseCorrupted);
-                    }
-
-                    if blockchain_block_hash != indexed_block_hash.unwrap() {
-                        error!(
-                            "Indexed block hash does not match blockchain hash at IndexedHeight({}). IndexedBlockHash({:?}), BlockchainBlockHash({:?})",
-                            indexer_height,
-                            indexed_block_hash.unwrap(),
-                            blockchain_block_hash
-                        );
-                        return Err(IndexerError::IndexedBlockHashMismatch);
-                    }
-
-                    match settings.checkpoint_height {
-                        Some(checkpoint) => {
-                            let existing_checkpoint = store.get_checkpoint_height()?;
-
-                            if let Some(existing_checkpoint) = existing_checkpoint {
-                                if existing_checkpoint != checkpoint {
-                                    error!(
-                                        "The checkpoint height used is different from the previously indexed one. Previously CheckpointHeight({}), New CheckpointHeight({})",
-                                        existing_checkpoint,
-                                        checkpoint
-                                    );
-
-                                    info!("To use a new checkpoint, you need to wipe the entire database and restart the indexer with the new checkpoint.");
-                                    info!("The indexer will continue syncing from the last indexed height");
-
-                                    return Err(
-                                        IndexerError::AlreadyIndexedWithDifferentCheckpointHeight,
-                                    );
-                                }
-                            }
-
-                            height_to_sync = indexer_height;
-                        }
-                        None => {
-                            height_to_sync = indexer_height;
-                        }
-                    }
-                }
-            }
-            None => match settings.checkpoint_height {
-                Some(checkpoint) => {
-                    if blockchain_height < checkpoint {
-                        error!("The Bitcoin network's current block height is behind the checkpoint height");
-                        return Err(IndexerError::CheckpointHeightAheadOfBlockchainHeight);
-                    }
-
-                    store.save_checkpoint_height(checkpoint)?;
-
-                    height_to_sync = checkpoint;
-
-                    info!("Starting to sync from CheckpointHeight({})", checkpoint);
-                }
-                None => {
-                    info!("Starting to sync from genesis block");
-                    height_to_sync = 0;
-                }
-            },
-        }
-
-        // Check if the block exists in the storage. If not, save it.
-        let block_hash = store.get_block_hash_by_height(height_to_sync)?;
-
-        if block_hash.is_none() {
-            let block = bitcoin_client
-                .get_block_by_height(&height_to_sync)?
-                .ok_or(IndexerError::BlockNotFound)?;
-
-            let estimated_fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
-
-            store.save_new_best_block(&block, estimated_fee_rate)?;
-        }
+        // The stored snapshot describes the mempool as the previous run left it, so nothing
+        // in it is trusted until the first tick refreshes it.
+        store.save_mempool_snapshot(vec![])?;
 
         Ok(Self {
             bitcoin_client,
             store,
             settings,
+            started: Cell::new(false),
         })
     }
-}
 
-impl<B> IndexerApi for Indexer<B>
-where
-    B: BitcoinClientApi,
-{
-    fn is_ready(&self) -> Result<bool, IndexerError> {
-        let current_height = self.get_best_height()?;
-        let blockchain_height = self.get_blockchain_best_height()?;
+    // =========================================================================
+    // Public API
+    // =========================================================================
 
-        if current_height.is_none() {
+    /// True once the cursor has reached the node's tip, so there is nothing left to read.
+    pub fn is_ready(&self) -> Result<bool, IndexerError> {
+        let Some(cursor) = self.store.get_cursor()? else {
             return Ok(false);
+        };
+
+        Ok(cursor >= self.bitcoin_client.get_tip_height()?)
+    }
+
+    /// Height of the highest block the indexer has read. Fails with `NotSynced` until the first tick places the cursor.
+    pub fn get_indexed_height(&self) -> Result<BlockHeight, IndexerError> {
+        self.store.get_cursor()?.ok_or(IndexerError::NotSynced)
+    }
+
+    /// The highest block the indexer has read. Always present once the first tick has run.
+    pub fn get_last_indexed_block(&self) -> Result<FullBlock, IndexerError> {
+        self.store.get_block_or_err(self.get_indexed_height()?)
+    }
+
+    /// The block with this height and hash, if the indexer holds it, without asking the node.
+    /// `None` means the indexer holds another block at that height, or none at all.
+    pub fn get_stored_block(
+        &self,
+        height: BlockHeight,
+        hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, IndexerError> {
+        let Some(stored) = self.store.get_block(height)? else {
+            return Ok(None);
+        };
+
+        // The indexer holds another block at this height, so this one was reorged out of the chain.
+        if stored.hash != *hash {
+            warn!(
+                "Block {hash} at height {height} differs from the indexed block {}",
+                stored.hash
+            );
+            return Ok(None);
         }
 
-        Ok(current_height.unwrap() >= blockchain_height)
+        Ok(Some(stored))
     }
 
-    fn get_best_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
-        let best_height = self.store.get_best_height()?;
-        Ok(best_height)
+    /// Returns the block with this height and hash.
+    /// - If the indexer holds a block at `height` with that hash, it is returned from storage.
+    /// - If `height` is below every block the indexer holds and the node's block at `height` has that hash, it is
+    ///   downloaded from the node.
+    /// - Otherwise it returns `None`, because that block is not on the chain the indexer has processed.
+    pub fn get_block(
+        &self,
+        height: BlockHeight,
+        hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, IndexerError> {
+        // The indexer holds a block at this height. If the hash differs, the node has reorged it out of the chain.
+        if let Some(stored) = self.store.get_block(height)? {
+            if stored.hash != *hash {
+                warn!(
+                    "Block {hash} at height {height} differs from the indexed block {}",
+                    stored.hash
+                );
+                return Ok(None);
+            }
+            return Ok(Some(stored));
+        }
+
+        // Check that the height is below everything the indexer holds.
+        let cursor = self.get_indexed_height()?;
+        if !is_below_window(height, cursor, false) {
+            info!("Block {hash} at height {height} is above the indexed height {cursor}");
+            return Ok(None);
+        }
+
+        // A downloaded block does not carry its height, so the node's block at that height must be the one asked for.
+        let node_hash = self.bitcoin_client.get_block_id_by_height(&height)?;
+        if node_hash != *hash {
+            info!("Block {hash} is not the node's block at height {height}, which is {node_hash}");
+            return Ok(None);
+        }
+
+        let block = self.bitcoin_client.get_block_by_hash(hash)?;
+        let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txdata)?;
+
+        Ok(Some(FullBlock {
+            height,
+            hash: block.block_hash(),
+            prev_hash: block.header.prev_blockhash,
+            txs: block.txdata,
+            estimated_fee_rate,
+        }))
     }
 
-    fn get_blockchain_best_height(&self) -> Result<BlockHeight, IndexerError> {
-        Ok(self.bitcoin_client.get_best_block()? as BlockHeight)
+    /// Moves the indexer at most one block, then refreshes the mempool snapshot.
+    ///
+    /// Returns true only when a block was added. Removing blocks after a reorg or a shorter chain, and having no
+    /// new block to add, return false.
+    pub fn tick(&self) -> Result<bool, IndexerError> {
+        let added = self.advance()?;
+        self.refresh_mempool_watch_list()?;
+        Ok(added)
     }
 
-    fn get_best_block(&self) -> Result<Option<FullBlock>, IndexerError> {
-        Ok(self.store.get_best_block()?)
+    /// Registers a txid to follow in the mempool on every tick.
+    pub fn add_mempool_watch(&self, tx_id: Txid) -> Result<(), IndexerError> {
+        self.store.add_mempool_watch(tx_id)
     }
 
-    fn get_transaction(
+    /// Stops following a txid. Only the consumer can decide this.
+    pub fn remove_mempool_watch(&self, tx_id: &Txid) -> Result<(), IndexerError> {
+        self.store.remove_mempool_watch(tx_id)
+    }
+
+    /// What the indexer holds about a transaction, without asking the node:
+    /// 1. In a block the indexer holds, which answers from storage.
+    /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
+    ///
+    /// `NotFound` means the indexer holds nothing about it, not that the transaction does not exist.
+    pub fn get_stored_transaction(
         &self,
         tx_id: &Txid,
-        search_in_mempool: bool,
+        include_mempool: bool,
     ) -> Result<TransactionStatus, IndexerError> {
-        // First, check if transaction is in storage
-        let tx_status = self.store.get_tx_info(tx_id)?;
+        if let Some((tx, block)) = self.store.get_indexed_tx(tx_id)? {
+            let cursor = self.get_indexed_height()?;
 
-        if let Some(mut tx_info) = tx_status {
-            // Orphan transactions: cache and watch list together encode the post-reorg
-            // mempool status, populated by tick() when a reorg is detected.
-            //   - in cache              → tx is back in mempool (InMempool)
-            //   - in watch list, no cache → mempool check still pending (stay Orphan)
-            //   - neither               → cache refresh confirmed absence (NotFound)
-            if tx_info.is_orphan() && search_in_mempool {
-                if self.store.is_in_mempool_cache(tx_id)? {
-                    tx_info.status = TransactionBlockchainStatus::InMempool;
-                    tx_info.confirmations = 0;
-                    tx_info.block_info = None;
-                } else if !self.store.is_in_mempool_watch(tx_id)? {
-                    tx_info.status = TransactionBlockchainStatus::NotFound;
-                    tx_info.confirmations = 0;
-                    tx_info.block_info = None;
-                }
-            }
-
-            Ok(tx_info)
-        } else {
-            if !search_in_mempool {
-                return Ok(TransactionStatus {
-                    tx: None,
-                    block_info: None,
-                    confirmations: 0,
-                    status: TransactionBlockchainStatus::NotFound,
-                });
-            }
-
-            // Transaction not found in indexed storage, check mempool cache
-            let in_mempool = self.store.is_in_mempool_cache(tx_id)?;
-            Ok(TransactionStatus {
-                tx: None,
-                block_info: None,
-                confirmations: 0,
-                status: if in_mempool {
-                    TransactionBlockchainStatus::InMempool
-                } else {
-                    TransactionBlockchainStatus::NotFound
-                },
-            })
+            return Ok(TransactionStatus::new(
+                tx,
+                block.height,
+                block.hash,
+                confirmations(cursor, block.height),
+            ));
         }
+
+        if include_mempool && self.store.is_in_mempool_snapshot(tx_id)? {
+            return Ok(TransactionStatus::InMempool);
+        }
+
+        Ok(TransactionStatus::NotFound)
     }
 
-    fn refresh_mempool_cache(&self) -> Result<(), IndexerError> {
-        let watch_list = self.store.get_mempool_watch_list()?;
-        let mut new_cache: Vec<Txid> = Vec::new();
-        for txid in watch_list {
-            match self.store.get_tx_info(&txid)? {
-                // Confirmed (non-orphaned): auto-remove from watch list, no mempool check needed.
-                Some(info) if !info.is_orphan() => {
-                    self.store.remove_from_mempool_watch(&txid)?;
-                }
-                // Not in storage or orphaned: check mempool.
-                other => {
-                    let is_orphaned = other.map(|t| t.is_orphan()).unwrap_or(false);
-                    if self.bitcoin_client.check_in_mempool(&txid) {
-                        new_cache.push(txid);
-                    } else if is_orphaned {
-                        // Orphaned + not in mempool → remove from watch list.
-                        // Next get_transaction call will return NotFound.
-                        self.store.remove_from_mempool_watch(&txid)?;
-                    }
-                    // Unconfirmed (not orphaned) + not in mempool: keep in watch list.
-                }
-            }
-        }
-        self.store.update_mempool_cache(new_cache)?;
-        Ok(())
-    }
-
-    fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
-        let best_block = self.store.get_best_block()?;
-        let best_blockchain_height = self.bitcoin_client.get_best_block()?;
-
-        if best_block.is_none() {
-            return Err(IndexerError::IndexerNotSynced);
-        }
-
-        let best_block = best_block.unwrap();
-
-        if best_block.height != best_blockchain_height {
-            return Err(IndexerError::IndexerNotSynced);
-        }
-
-        if best_block.estimated_fee_rate > 0 {
-            Ok(best_block.estimated_fee_rate)
-        } else {
-            Err(IndexerError::FeeRateNotEstimated)
-        }
-    }
-
-    fn is_utxo_unspent_rpc(
+    /// What the indexer knows about a transaction, in three steps:
+    /// 1. In a block the indexer holds, which answers from storage.
+    /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
+    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
+    ///    and one in the mempool that nobody watches.
+    ///
+    /// `include_mempool` suppresses mempool answers from the indexer's snapshot, it does not stop the node being asked.
+    pub fn get_transaction(
         &self,
-        txid: &Txid,
+        tx_id: &Txid,
+        include_mempool: bool,
+    ) -> Result<TransactionStatus, IndexerError> {
+        match self.get_stored_transaction(tx_id, include_mempool)? {
+            TransactionStatus::NotFound => self.get_transaction_from_node(tx_id, include_mempool),
+            status => Ok(status),
+        }
+    }
+
+    /// Fee rate estimated from the most recently indexed block.
+    pub fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
+        let last_block = self.get_last_indexed_block()?;
+
+        if last_block.height != self.bitcoin_client.get_tip_height()? {
+            return Err(IndexerError::NotSynced);
+        }
+
+        if last_block.estimated_fee_rate == 0 {
+            return Err(IndexerError::FeeRateNotEstimated);
+        }
+
+        Ok(last_block.estimated_fee_rate)
+    }
+
+    /// Live RPC check for UTXO spendability, bypassing everything the indexer stores.
+    /// True when the UTXO is unspent, counting the mempool when `include_mempool` is true.
+    pub fn rpc_is_utxo_unspent(
+        &self,
+        tx_id: &Txid,
         vout: u32,
         include_mempool: bool,
     ) -> Result<bool, IndexerError> {
         Ok(self
             .bitcoin_client
-            .is_utxo_unspent(txid, vout, include_mempool)?)
+            .is_utxo_unspent(tx_id, vout, include_mempool)?)
     }
 
-    fn get_tx_confirmations(&self, txid: &Txid) -> Result<Option<u32>, IndexerError> {
-        Ok(self.bitcoin_client.get_tx_confirmations(txid)?)
+    /// Live `getrawtransaction` confirmation probe. `None` when the node does not know the transaction,
+    /// `Some(0)` when it is in the mempool, `Some(n)` when it is mined with n confirmations.
+    pub fn rpc_get_tx_confirmations(&self, tx_id: &Txid) -> Result<Option<u32>, IndexerError> {
+        Ok(self.bitcoin_client.get_tx_confirmations(tx_id)?)
     }
 
-    fn tick(&self) -> Result<(), IndexerError> {
-        // Retrieve the last block height that has been successfully synced by the indexer.
-        // This should have data.
-        let best_indexer_height = self.store.get_best_height()?.unwrap_or(0);
-        // Retrieve the current best block height from the Bitcoin blockchain.
-        let best_blockchain_height = self.bitcoin_client.get_best_block()?;
+    // =========================================================================
+    // Private helpers
+    // =========================================================================
 
-        // Choose the minimum of the indexer's synced height and the blockchain's best height
-        // to check for potential reorgs.
-        let mut current_height = best_indexer_height;
+    /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart that is
+    /// not catching up jumps there when blocks would be skipped. Returns whether it indexed a block.
+    /// True when the indexer is ready, false when it has to catch up.
+    fn start(&self, tip: BlockHeight) -> Result<bool, IndexerError> {
+        let window_start = window_start(tip, self.settings.retention_depth);
 
-        if best_indexer_height > best_blockchain_height {
-            current_height = best_blockchain_height;
+        // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
+        match self.store.get_cursor()? {
+            // A fresh database has nothing to resume from. Start one window below the tip.
+            None => {
+                info!("No cursor stored, starting at height {window_start} (tip {tip})");
+                self.index_first_block(window_start)?;
+                Ok(true)
+            }
+            // A restart that is catching up from a stored cursor reads every block in between.
+            Some(cursor) if self.settings.catch_up => {
+                info!("Resuming from height {cursor} (tip {tip})");
+                Ok(false)
+            }
+            // A restart that is not catching up jumps straight to tip - retention_depth.
+            Some(cursor) if window_start > cursor.saturating_add(1) => {
+                warn!(
+                    "catch_up is disabled, skipping blocks {}..={}. Output pattern and spending UTXO events in that range are lost",
+                    cursor.saturating_add(1),
+                    window_start.saturating_sub(1)
+                );
+
+                self.delete_window(cursor)?;
+                self.index_first_block(window_start)?;
+                Ok(true)
+            }
+            // A restart that is not catching up, but the cursor is already at or above tip - retention_depth, so no blocks are skipped.
+            Some(cursor) => {
+                info!("Resuming from height {cursor} (tip {tip})");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Moves the indexer at most one block. Returns true only when a block was added.
+    fn advance(&self) -> Result<bool, IndexerError> {
+        let tip = self.bitcoin_client.get_tip_height()?;
+
+        if !self.started.get() {
+            let indexed = self.start(tip)?;
+            self.started.set(true);
+
+            if indexed {
+                return Ok(true);
+            }
         }
 
-        // Fetch the block at the determined height from both the blockchain and the indexer store.
-        let new_blockchain_block = self
-            .bitcoin_client
-            .get_block_by_height(&current_height)?
-            .ok_or(IndexerError::BlockNotFound)?;
+        let cursor = self.get_indexed_height()?;
 
-        let indexer_block = self
-            .store
-            .get_block_by_height(current_height)?
-            .ok_or(IndexerError::BlockNotFound)?;
+        // The node's chain is shorter than the indexed one.
+        if cursor > tip {
+            // Nothing is deleted when the indexer holds no block at the node's tip to continue from.
+            if self.store.get_block(tip)?.is_none() {
+                return Err(IndexerError::ReorgDeeperThanWindow(tip));
+            }
 
-        // --- REORG DETECTION ---
-        // If the block exists but the hashes differ, a reorg has occurred and we must roll back.
-        if new_blockchain_block.height > 0 && new_blockchain_block.hash != indexer_block.hash {
+            self.remove_blocks_above(tip, cursor)?;
+            return Ok(false);
+        }
+
+        let last_block = self.store.get_block_or_err(cursor)?;
+        let node_block = self.rpc_get_block_at(cursor)?;
+
+        // The last indexed block was reorged out: the node has a different block at that height.
+        if node_block.hash != last_block.hash {
             warn!(
-                "REORG: Block at height {} is different from the blockchain",
-                current_height
+                "Reorg detected at height {}. Indexed {}, node {}",
+                cursor, last_block.hash, node_block.hash
             );
 
-            self.store
-                .mark_following_blocks_as_orphan(new_blockchain_block.height)?;
-
-            // Re-enroll txids from the orphaned block so the cache refresh can check them.
-            for tx in &indexer_block.txs {
-                self.store.add_to_mempool_watch(tx.compute_txid())?;
+            // The block is kept when there is no block below it to continue from, and below genesis there is none.
+            let below = cursor.saturating_sub(1);
+            if cursor == 0 || self.store.get_block(below)?.is_none() {
+                return Err(IndexerError::ReorgDeeperThanWindow(below));
             }
 
-            // Roll back to the previous block.
-            let previous_blockchain_height = current_height.saturating_sub(1);
-            self.store.save_best_height(previous_blockchain_height)?;
+            self.remove_last_indexed_block(cursor)?;
+            return Ok(false);
+        }
 
-            info!(
-                "Rolling back to previous block. New block to sync height: {}",
-                previous_blockchain_height
+        // No new block on the node.
+        if cursor == tip {
+            return Ok(false);
+        }
+
+        // Cursor < tip, so the node has a new block.
+        let next_height = cursor.saturating_add(1);
+        let next_block = self.rpc_get_block_at(next_height)?;
+
+        // The next block does not build on the last indexed block, so that block was reorged out between the two reads above.
+        if next_block.prev_hash != last_block.hash {
+            warn!(
+                "Block {} does not build on the indexed block at {}. Storing nothing, the next tick will handle the reorg",
+                next_height, cursor
             );
 
-            self.refresh_mempool_cache()?;
-            return Ok(());
+            return Ok(false);
         }
 
-        // --- NORMAL SYNC PATH ---
+        info!("Indexing block {} of {}", next_height, tip);
+        self.index_block(next_block)?;
 
-        // If the indexer is already caught up with the blockchain, just refresh the
-        // mempool cache so that mempool changes are picked up between blocks
-        if best_indexer_height == best_blockchain_height {
-            info!("Indexer is up to date");
-            self.refresh_mempool_cache()?;
-            return Ok(());
-        }
-
-        if best_indexer_height > best_blockchain_height {
-            // This branch handles the scenario where the indexer has advanced further than the current blockchain tip.
-            // This situation can occur if blocks have been invalidated or a reorg has caused the blockchain to roll back.
-            // Mark all blocks above the blockchain's best height as orphan before updating the height.
-            warn!("Indexer is ahead of the blockchain. Marking blocks as orphan and updating synced and best heights to match the blockchain's current best height.");
-
-            self.store
-                .mark_following_blocks_as_orphan(best_blockchain_height + 1)?;
-
-            // Re-enroll txids from every orphaned block so the cache refresh can verify
-            // whether they are still live in the mempool, evicted, or now NotFound.
-            for height in (best_blockchain_height + 1)..=best_indexer_height {
-                if let Some(block) = self.store.get_block_by_height(height)? {
-                    for tx in &block.txs {
-                        self.store.add_to_mempool_watch(tx.compute_txid())?;
-                    }
-                }
-            }
-
-            self.store.save_best_height(best_blockchain_height)?;
-            self.refresh_mempool_cache()?;
-            return Ok(());
-        }
-
-        // At this point, the blockchain has advanced beyond the indexer's current state.
-        // Proceed to process and index the next block to catch up.
-        let next_block_height = current_height + 1;
-
-        info!(
-            "Synced block at height {} of {}",
-            next_block_height, best_blockchain_height
-        );
-
-        let next_block = self
-            .bitcoin_client
-            .get_block_by_height(&next_block_height)?
-            .ok_or(IndexerError::BlockNotFound)?;
-
-        let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &next_block)?;
-
-        // Save the next block to the local store.
-        self.store
-            .save_new_best_block(&next_block, estimated_fee_rate)?;
-
-        self.refresh_mempool_cache()?;
-
-        Ok(())
+        Ok(true)
     }
 
-    fn get_block_by_height(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
-        let block = self.store.get_block_by_height(height)?;
-        Ok(block)
-    }
-
-    fn get_block_by_hash(&self, hash: &BlockHash) -> Result<Option<FullBlock>, IndexerError> {
-        let block = self.store.get_block_by_hash(hash)?;
-        Ok(block)
-    }
-
-    fn add_mempool_watch(&self, txid: Txid) -> Result<(), IndexerError> {
-        self.store.add_to_mempool_watch(txid)?;
-        Ok(())
-    }
-
-    fn remove_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerError> {
-        self.store.remove_from_mempool_watch(txid)?;
-        Ok(())
-    }
-}
-
-/// Estimates the fee rate for the next block based on the middle transaction in the provided block.
-///
-/// This function analyzes the fee rate of the middle transaction in a block to provide an estimate
-/// for future fee calculations. It implements a simple heuristic by selecting the transaction at
-/// the median position within the block's transaction list.
-///
-/// # Implementation Details
-///
-/// The function uses Bitcoin Core RPC `getrawtransaction` with verbosity level 2, which requires
-/// Bitcoin Core version 25.0.0 or higher. It calculates the fee rate using the formula:
-/// `fee_rate = transaction_fee_in_sats / transaction_vsize_in_vb`
-///
-/// # Note
-///
-/// This is a simple estimation method that could be improved by:
-/// - Using `getblock` with verbosity 3 (when supported by bitcoincore-rpc)
-/// - Calculating median or average fee rates from multiple transactions
-/// - Considering block fullness percentage for more accurate predictions
-fn estimate_fee_rate<B: BitcoinClientApi>(
-    bitcoin_client: &B,
-    next_block: &BlockInfo,
-) -> Result<u64, IndexerError> {
-    // Const might be settings in the future
-    const MIN_BLOCK_TX: usize = 5;
-    const ERROR_FEE_RATE: u64 = 0; // sat/vB
-    const DEFAULT_MIN_FEE_RATE: u64 = 1; // sat/vB
-
-    // TODO use get block with verbosity 3 would be a nice optimization (not yet supported by bitcoincore-rpc),
-    // it will remove the need to call again getrawtransaction
-    // with that approach we can cheaply calculate the median fee rate of the block, or the average fee rate from the medium zone transactions
-    // See https://bitcoincore.org/en/doc/23.0.0/rpc/blockchain/getblock/
-
-    let block_tx_count = next_block.txs.len();
-    tracing::trace!("Transactions count: {}", block_tx_count);
-
-    // In a future version we can analyze if the block is full or empty or which %,
-    // a block lower than 75% will lead to lower fee rates for next block inclusion
-    if block_tx_count <= MIN_BLOCK_TX {
+    /// Deletes the indexed blocks above the node's tip, puts the mempool watch entries they confirmed back
+    /// to pending, and moves the cursor to the tip.
+    fn remove_blocks_above(
+        &self,
+        tip: BlockHeight,
+        cursor: BlockHeight,
+    ) -> Result<(), IndexerError> {
         warn!(
-            "Can't estimate fee rate - block has {} or fewer transactions",
-            MIN_BLOCK_TX
+            "The chain is shorter than the indexer. Deleting blocks {}..={}",
+            tip.saturating_add(1),
+            cursor
         );
-        return Ok(ERROR_FEE_RATE);
-    }
 
-    let middle_index = block_tx_count / 2;
-    let middle_tx = next_block.txs[middle_index].clone();
-
-    // Note: For coinbase transactions (first tx in block), there's no fee since there are no inputs
-    // Usually the block is ordered with coinbase as first transaction, but this is not enforced by consensus rules, to this case might rarely happen
-    if middle_tx.is_coinbase() {
-        warn!("Can't estimate fee rate - middle transaction is coinbase");
-        return Ok(ERROR_FEE_RATE);
-    }
-
-    let tx_id = middle_tx.compute_txid();
-
-    // This call needs bitcoin core 25.0.0 or higher
-    // see https://bitcoincore.org/en/doc/25.0.0/rpc/rawtransactions/getrawtransaction/
-    let raw_tx_verbose = bitcoin_client.get_raw_transaction_verbosity_two(&tx_id)?;
-
-    let fee_in_btc = match raw_tx_verbose.get("fee").and_then(|v| v.as_f64()) {
-        Some(fee_value) => fee_value,
-        None => {
-            error!(
-                "Can't estimate fee rate - no fee value available for transaction {}",
-                tx_id
-            );
-            return Ok(ERROR_FEE_RATE);
-        }
-    };
-
-    let vsize = match raw_tx_verbose.get("vsize").and_then(|v| v.as_u64()) {
-        Some(vsize_value) => vsize_value,
-        None => {
-            error!(
-                "Can't estimate fee rate - no vsize value available for transaction {}",
-                tx_id
-            );
-            return Ok(ERROR_FEE_RATE);
-        }
-    };
-
-    let fee = match bitcoin::Amount::from_btc(fee_in_btc) {
-        Ok(amount) => amount.to_sat(),
-        Err(_) => {
-            error!(
-                "Can't estimate fee rate - invalid fee value {} for transaction {}",
-                fee_in_btc, tx_id
-            );
-            return Ok(ERROR_FEE_RATE);
-        }
-    };
-
-    let fee_rate = fee as f64 / vsize as f64;
-    let adjusted_fee_rate = if fee_rate < 1.0 {
-        DEFAULT_MIN_FEE_RATE
-    } else {
-        fee_rate as u64
-    };
-
-    tracing::debug!("TXID: {:#?}", tx_id);
-    tracing::debug!("Adjusted fee rate: {} sat/vB", adjusted_fee_rate);
-    tracing::trace!("middle index: {}", middle_index);
-    tracing::trace!("middle transaction: {:#?}", middle_tx);
-    tracing::trace!("raw_tx_verbose middle transaction: {:#?}", raw_tx_verbose);
-    tracing::trace!("Transaction fee: {} sats", fee);
-    tracing::trace!("Transaction vsize: {} vB", vsize);
-    tracing::trace!("Transaction fee rate: {} sat/vB", fee_rate);
-    tracing::trace!("Integer Transaction fee rate: {} sat/vB", fee_rate as u64);
-
-    Ok(adjusted_fee_rate)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::IndexerConfig;
-    use bitcoin::PublicKey;
-    use bitcoind::bitcoind::Bitcoind;
-    use bitcoind::config::BitcoindConfig;
-    use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
-    use bitvmx_settings::settings;
-
-    // Helper to setup bitcoind and BitcoinClient for tests
-    fn setup_bitcoind(
-    ) -> Result<(BitcoinClient, Bitcoind, bitcoin::Address), Box<dyn std::error::Error>> {
-        let config = settings::load::<IndexerConfig>()?;
-        let bitcoind_config = BitcoindConfig::default();
-        let bitcoind = Bitcoind::new(bitcoind_config, config.bitcoin.clone(), None);
-        bitcoind.start()?;
-
-        // Wait for bitcoind to be ready
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        let bitcoin_client = BitcoinClient::new_from_config(&config.bitcoin)?;
-        let wallet = bitcoin_client.init_wallet("test_wallet")?;
-
-        Ok((bitcoin_client, bitcoind, wallet))
-    }
-
-    fn get_random_pubkey() -> PublicKey {
-        use bitcoin::key::rand::rngs::OsRng;
-        use bitcoin::secp256k1::{Secp256k1, SecretKey};
-
-        let secp = Secp256k1::new();
-        let secret_key = SecretKey::new(&mut OsRng);
-        let public_key = secret_key.public_key(&secp);
-        PublicKey::new(public_key)
-    }
-
-    #[test]
-    fn test_estimate_fee_rate_with_real_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
-
-        // Mine 101 blocks to have mature coins (coinbase needs 100 confirmations)
-        bitcoin_client.mine_blocks_to_address(101, &wallet)?;
-
-        // Create 10 transactions by generating new addresses and mining to them
-        // This creates actual transactions with inputs and outputs
-        for _ in 0..10 {
-            let pubkey = get_random_pubkey();
-            let new_address = bitcoin_client.get_new_address(pubkey, bitcoin::Network::Regtest)?;
-            bitcoin_client.mine_blocks_to_address(1, &new_address)?;
+        for height in (tip.saturating_add(1)..=cursor).rev() {
+            self.store.delete_block(height)?;
         }
 
-        // Get the last mined block which should have coinbase transaction
-        let best_block_height = bitcoin_client.get_best_block()?;
-        let block = bitcoin_client
-            .get_block_by_height(&best_block_height)?
-            .ok_or("Block not found")?;
-
-        // Verify estimate_fee_rate is called
-        let fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
-
-        // Block only has coinbase (1 tx), so should return 0
-        assert_eq!(
-            fee_rate, 0,
-            "Fee rate should be 0 for blocks with only coinbase"
-        );
-
-        // Verify the block was processed from real blockchain data (not mocks)
-        assert!(
-            block.txs.len() > 0,
-            "Block should have transactions from real blockchain"
-        );
-        assert!(
-            block.txs[0].is_coinbase(),
-            "First transaction should be coinbase"
-        );
-
-        bitcoind.stop()?;
-        Ok(())
+        self.reset_mempool_watch_list_from(tip.saturating_add(1))?;
+        self.store.save_cursor(tip)
     }
 
-    #[test]
-    fn test_estimate_fee_rate_computation_from_indexer() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::store::IndexerStore;
-        use std::rc::Rc;
-        use storage_backend::{storage::Storage, storage_config::StorageConfig};
+    /// Deletes the block at the cursor with the height entries of its transactions, puts the mempool watch entries
+    /// it confirmed back to pending, and moves the cursor one block back.
+    fn remove_last_indexed_block(&self, cursor: BlockHeight) -> Result<(), IndexerError> {
+        self.store.delete_block(cursor)?;
+        self.reset_mempool_watch_list_from(cursor)?;
+        self.store.save_cursor(cursor.saturating_sub(1))
+    }
 
-        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
+    /// Stores a block with its estimated fee rate, moves the cursor onto it, and deletes the block
+    /// that falls out of the retention window.
+    fn index_block(&self, block: BlockInfo) -> Result<(), IndexerError> {
+        let height = block.height;
+        let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txs)?;
 
-        // Mine blocks with mature coins
-        bitcoin_client.mine_blocks_to_address(105, &wallet)?;
+        self.store.save_block(&FullBlock {
+            height,
+            hash: block.hash,
+            prev_hash: block.prev_hash,
+            txs: block.txs,
+            estimated_fee_rate,
+        })?;
+        self.store.save_cursor(height)?;
 
-        // Create indexer and let it process blocks
-        let db_path = format!(
-            "./test_output/estimate_fee_test_{}/db",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
-        );
-        let storage = Rc::new(Storage::new(&StorageConfig::new(db_path.clone(), None))?);
-        let store = Rc::new(IndexerStore::new(storage)?);
-
-        let indexer = crate::indexer::Indexer::new(bitcoin_client, store.clone(), None)?;
-
-        // Process blocks through the indexer
-        for _ in 0..5 {
-            indexer.tick()?;
+        if let Some(pruned) = height_to_prune(height, self.settings.retention_depth) {
+            self.store.delete_block(pruned)?;
         }
-
-        // Get the best block from indexer store
-        let best_block = store.get_best_block()?;
-        assert!(best_block.is_some(), "Indexer should have processed blocks");
-
-        let block = best_block.unwrap();
-
-        // Verify estimate_fee_rate was computed and stored by the indexer
-        // The fee rate is stored in the FullBlock by the indexer when processing blocks
-        // For blocks with only coinbase or few transactions, it will be 0
-        assert!(
-            block.estimated_fee_rate == 0,
-            "Fee rate should be 0 for blocks with insufficient transactions (computed by indexer)"
-        );
-
-        // Clean up
-        bitcoind.stop()?;
-        let _ = std::fs::remove_dir_all(&db_path);
 
         Ok(())
     }
 
-    #[test]
-    fn test_estimate_fee_rate_with_few_transactions() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
+    /// Asks the node about every watched transaction that is not already confirmed in a held block, and records the answers.
+    fn refresh_mempool_watch_list(&self) -> Result<(), IndexerError> {
+        let mut mempool_watch_list = self.store.get_mempool_watch_list()?;
+        let mut in_mempool = Vec::new();
+        let mut mempool_watch_list_changed = false;
 
-        // Mine a single block with only coinbase
-        bitcoin_client.mine_blocks_to_address(1, &wallet)?;
+        for (tx_id, confirmed_at) in mempool_watch_list.iter_mut() {
+            // Already confirmed in a block the indexer holds. No block read and no RPC call.
+            if confirmed_at.is_some() {
+                continue;
+            }
 
-        let best_block_height = bitcoin_client.get_best_block()?;
-        let block = bitcoin_client
-            .get_block_by_height(&best_block_height)?
-            .ok_or("Block not found")?;
+            if let Some(height) = self.store.get_tx_height(tx_id)? {
+                *confirmed_at = Some(height);
+                mempool_watch_list_changed = true;
+                continue;
+            }
 
-        // Verify this is real blockchain data (not mock)
-        assert!(
-            block.txs.len() > 0,
-            "Block should have at least coinbase from real blockchain"
-        );
-        assert!(block.txs.len() <= 5, "Block should have few transactions");
+            if self.bitcoin_client.check_in_mempool(tx_id)? {
+                in_mempool.push(*tx_id);
+            }
+        }
 
-        // Call estimate_fee_rate on real block data
-        let fee_rate = estimate_fee_rate(&bitcoin_client, &block)?;
-        assert_eq!(
-            fee_rate, 0,
-            "Fee rate should be 0 for blocks with <= 5 transactions"
-        );
+        if mempool_watch_list_changed {
+            self.store.save_mempool_watch_list(mempool_watch_list)?;
+        }
 
-        bitcoind.stop()?;
+        self.store.save_mempool_snapshot(in_mempool)?;
+
         Ok(())
     }
 
-    #[test]
-    fn test_estimate_fee_rate_returns_valid_result() -> Result<(), Box<dyn std::error::Error>> {
-        let (bitcoin_client, bitcoind, wallet) = setup_bitcoind()?;
+    /// The rpc node's block at this height. Fails with `BlockNotFound` when the node has none.
+    fn rpc_get_block_at(&self, height: BlockHeight) -> Result<BlockInfo, IndexerError> {
+        self.bitcoin_client
+            .get_block_by_height(&height)?
+            .ok_or(IndexerError::BlockNotFound(height))
+    }
 
-        // Mine blocks to get real blockchain data
-        bitcoin_client.mine_blocks_to_address(5, &wallet)?;
+    /// Reads the block that a fresh start, or a jump, begins from, and puts the cursor on it.
+    fn index_first_block(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let block = self.rpc_get_block_at(height)?;
 
-        let best_block_height = bitcoin_client.get_best_block()?;
-        let block = bitcoin_client
-            .get_block_by_height(&best_block_height)?
-            .ok_or("Block not found")?;
+        let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txs)?;
 
-        // Verify we're using real blockchain data
-        assert!(block.height > 0, "Block should be from real blockchain");
-        assert!(
-            block.txs.len() > 0,
-            "Block should contain transactions from real blockchain"
-        );
+        self.store.save_block(&FullBlock {
+            height: block.height,
+            hash: block.hash,
+            prev_hash: block.prev_hash,
+            txs: block.txs,
+            estimated_fee_rate,
+        })?;
+        self.store.save_cursor(block.height)?;
 
-        // Call estimate_fee_rate and verify it returns Ok
-        let result = estimate_fee_rate(&bitcoin_client, &block);
-        assert!(
-            result.is_ok(),
-            "estimate_fee_rate should return Ok with real blockchain data"
-        );
-
-        let fee_rate = result?;
-        // For blocks with only coinbase, fee_rate will be 0
-        assert_eq!(
-            fee_rate, 0,
-            "Fee rate is 0 because block has insufficient transactions"
-        );
-
-        bitcoind.stop()?;
         Ok(())
+    }
+
+    /// Deletes every block the indexer holds, used when a restart jumps forward instead of catching up.
+    /// The window below the cursor is the only place blocks can be, so the range is bounded.
+    fn delete_window(&self, cursor: BlockHeight) -> Result<(), IndexerError> {
+        let oldest = cursor.saturating_sub(self.settings.retention_depth);
+
+        for height in (oldest..=cursor).rev() {
+            self.store.delete_block(height)?;
+        }
+
+        self.reset_mempool_watch_list_from(0)
+    }
+
+    /// Puts every mempool watch entry confirmed at `height` or above back to pending, because the blocks that
+    /// confirmed them are no longer held. The next refresh checks them again.
+    fn reset_mempool_watch_list_from(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let mut mempool_watch_list = self.store.get_mempool_watch_list()?;
+        let mut changed = false;
+
+        for (_, confirmed_at) in mempool_watch_list.iter_mut() {
+            if confirmed_at.is_some_and(|confirmed| confirmed >= height) {
+                *confirmed_at = None;
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.store.save_mempool_watch_list(mempool_watch_list)?;
+        }
+
+        Ok(())
+    }
+
+    /// The node is asked once whether the transaction is mined, in the mempool, or unknown. A mined
+    /// transaction costs one more call, for the height of its block, and is only reported `Confirmed` when that
+    /// block is below everything the indexer holds.
+    fn get_transaction_from_node(
+        &self,
+        tx_id: &Txid,
+        include_mempool: bool,
+    ) -> Result<TransactionStatus, IndexerError> {
+        // A transaction ahead of the indexer cannot be evaluated for confirmation, so it is reported as pending.
+        let not_confirmed = || {
+            if include_mempool {
+                TransactionStatus::InMempool
+            } else {
+                TransactionStatus::NotFound
+            }
+        };
+
+        let info = match self.bitcoin_client.get_raw_transaction_info(tx_id)? {
+            Some(info) => info,
+            None => return Ok(TransactionStatus::NotFound),
+        };
+
+        // No block hash means the node holds it in its mempool.
+        let block_hash = match info.blockhash {
+            None => return Ok(not_confirmed()),
+            Some(block_hash) => block_hash,
+        };
+
+        // A block hash with zero confirmations is a block that is not on the chain.
+        if info.confirmations.unwrap_or(0) == 0 {
+            return Ok(TransactionStatus::NotFound);
+        }
+
+        let height = self
+            .bitcoin_client
+            .get_block_header_info(&block_hash)?
+            .height as BlockHeight;
+        let cursor = self.get_indexed_height()?;
+        let height_is_stored = self.store.get_block(height)?.is_some();
+
+        // A block above the cursor, or at a height the indexer holds with a different block, is one the indexer has not processed.
+        if !is_below_window(height, cursor, height_is_stored) {
+            return Ok(not_confirmed());
+        }
+
+        let tx = info.transaction().map_err(|e| {
+            IndexerError::Internal(format!(
+                "the node returned transaction {tx_id} in a form that does not decode: {e}"
+            ))
+        })?;
+
+        Ok(TransactionStatus::new(
+            tx,
+            height,
+            block_hash,
+            confirmations(cursor, height),
+        ))
     }
 }
