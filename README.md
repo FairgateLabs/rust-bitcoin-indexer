@@ -50,6 +50,7 @@ The `Indexer` struct exposes:
 | `get_indexed_height` | Height of the highest block read. |
 | `get_last_indexed_block` | That block, with its transactions and fee rate. |
 | `get_block` | The block with a given height and hash, from storage or from the node. |
+| `get_stored_block` | The same block, from the indexer alone. |
 | `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node when the indexer holds nothing. |
 | `get_stored_transaction` | The same status, from the indexer alone. |
 | `get_estimated_fee_rate` | Fee rate of the last indexed block, once the indexer is at the tip. |
@@ -68,7 +69,7 @@ Methods with the `rpc_` prefix answer from the node alone, with none of the inde
 
 `get_stored_transaction(txid, include_mempool)` stops after step 2, for a caller that wants no node call and reads `NotFound` as "the indexer holds nothing about it".
 
-`get_block(height, hash)` follows the same idea: a block the indexer holds is returned when the hash matches, a block below the window is downloaded from the node when the node has that hash at that height, and anything the indexer has not processed yet gives `None`.
+`get_block(height, hash)` follows the same idea: a block the indexer holds is returned when the hash matches, a block below the window is downloaded from the node when the node has that hash at that height, and anything the indexer has not processed yet gives `None`. `get_stored_block(height, hash)` stops at the first of those, for a caller that wants no node call.
 
 > 💡 **The window is the source of truth.** Below it the node is trusted, above it only the indexer's own chain counts. That is what keeps every answer consistent with the blocks a consumer has already been given.
 

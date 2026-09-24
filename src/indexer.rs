@@ -72,6 +72,29 @@ where
         self.store.get_block_or_err(self.get_indexed_height()?)
     }
 
+    /// The block with this height and hash, if the indexer holds it, without asking the node.
+    /// `None` means the indexer holds another block at that height, or none at all.
+    pub fn get_stored_block(
+        &self,
+        height: BlockHeight,
+        hash: &BlockHash,
+    ) -> Result<Option<FullBlock>, IndexerError> {
+        let Some(stored) = self.store.get_block(height)? else {
+            return Ok(None);
+        };
+
+        // The indexer holds another block at this height, so this one was reorged out of the chain.
+        if stored.hash != *hash {
+            warn!(
+                "Block {hash} at height {height} differs from the indexed block {}",
+                stored.hash
+            );
+            return Ok(None);
+        }
+
+        Ok(Some(stored))
+    }
+
     /// Returns the block with this height and hash.
     /// - If the indexer holds a block at `height` with that hash, it is returned from storage.
     /// - If `height` is below every block the indexer holds and the node's block at `height` has that hash, it is

@@ -825,15 +825,24 @@ fn get_block() -> anyhow::Result<()> {
     assert_eq!(indexer.get_block(100, &stale)?, None);
     assert!(indexer.get_block(100, &node.hash_at(100)?)?.is_some());
 
-    // A held block with its hash, and a held height asked with another hash.
+    // A held block with its hash, and a held height asked with another hash. Both are answered from storage alone.
+    assert_eq!(
+        indexer.get_stored_block(110, &node.hash_at(110)?)?,
+        store.get_block(110)?
+    );
     assert_eq!(
         indexer.get_block(110, &node.hash_at(110)?)?,
         store.get_block(110)?
     );
+    assert_eq!(indexer.get_stored_block(110, &node.hash_at(109)?)?, None);
     assert_eq!(indexer.get_block(110, &node.hash_at(109)?)?, None);
+
+    // A block below the window is not held, so only get_block can answer.
+    assert_eq!(indexer.get_stored_block(50, &node.hash_at(50)?)?, None);
 
     // A block the indexer has not reached yet.
     node.mine(1)?;
+    assert_eq!(indexer.get_stored_block(111, &node.hash_at(111)?)?, None);
     assert_eq!(indexer.get_block(111, &node.hash_at(111)?)?, None);
 
     // Blocks below the window, including genesis and low heights, are downloaded with the node's content.
