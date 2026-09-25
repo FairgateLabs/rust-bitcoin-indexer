@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "bitcoin-indexer"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -398,8 +398,8 @@ dependencies = [
 
 [[package]]
 name = "bitcoind"
-version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitcoind.git?tag=v0.8.5#2f86355516f539c242caec5545361c061ded78d7"
+version = "0.8.6"
+source = "git+https://github.com/FairgateLabs/rust-bitcoind.git?tag=v0.8.6#92739a7a04f9b618b338cbf39db8bdf3a72bdd1a"
 dependencies = [
  "bitvmx-bitcoin-rpc",
  "bollard",
@@ -421,8 +421,8 @@ dependencies = [
 
 [[package]]
 name = "bitvmx-bitcoin-rpc"
-version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git?tag=v0.8.5#2b45ad1861a8348f02fe26721df812dc45ca6370"
+version = "0.8.6"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git?tag=v0.8.6#b0fe9e3440c962501957b5dcc068b504b5779eee"
 dependencies = [
  "bitcoin",
  "bitcoincore-rpc",
@@ -437,8 +437,8 @@ dependencies = [
 
 [[package]]
 name = "bitvmx-settings"
-version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-settings.git?tag=v0.8.5#67ff0344aec591222599d901ea3b85be45f97949"
+version = "0.8.6"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-settings.git?tag=v0.8.6#17a708dead6765c548b0ef94b5085b243be3bef0"
 dependencies = [
  "age",
  "clap",
@@ -2750,8 +2750,8 @@ dependencies = [
 
 [[package]]
 name = "rust-bitvmx-storage-backend"
-version = "0.8.5"
-source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.5#9e2ec0a9eb5b03224fc5447dddb8b02b0ab03ecb"
+version = "0.8.6"
+source = "git+https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git?tag=v0.8.6#438061802b322b7d8206dc4730f1afa2c4b94cf7"
 dependencies = [
  "age",
  "clap",
