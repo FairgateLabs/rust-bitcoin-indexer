@@ -247,38 +247,19 @@ where
     // Private helpers
     // =========================================================================
 
-    /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart that is
-    /// not catching up jumps there when blocks would be skipped. Returns whether it indexed a block.
-    /// True when the indexer is ready, false when it has to catch up.
+    /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart resumes
+    /// from its cursor, reading every block in between. Returns whether it indexed a block.
     fn start(&self, tip: BlockHeight) -> Result<bool, IndexerError> {
-        let window_start = window_start(tip, self.settings.retention_depth);
-
         // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
         match self.store.get_cursor()? {
             // A fresh database has nothing to resume from. Start one window below the tip.
             None => {
+                let window_start = window_start(tip, self.settings.retention_depth);
                 info!("No cursor stored, starting at height {window_start} (tip {tip})");
                 self.index_first_block(window_start)?;
                 Ok(true)
             }
-            // A restart that is catching up from a stored cursor reads every block in between.
-            Some(cursor) if self.settings.catch_up => {
-                info!("Resuming from height {cursor} (tip {tip})");
-                Ok(false)
-            }
-            // A restart that is not catching up jumps straight to tip - retention_depth.
-            Some(cursor) if window_start > cursor.saturating_add(1) => {
-                warn!(
-                    "catch_up is disabled, skipping blocks {}..={}. Output pattern and spending UTXO events in that range are lost",
-                    cursor.saturating_add(1),
-                    window_start.saturating_sub(1)
-                );
-
-                self.delete_window(cursor)?;
-                self.index_first_block(window_start)?;
-                Ok(true)
-            }
-            // A restart that is not catching up, but the cursor is already at or above tip - retention_depth, so no blocks are skipped.
+            // A restart resumes from its cursor, and the ticks that follow read every block up to the tip.
             Some(cursor) => {
                 info!("Resuming from height {cursor} (tip {tip})");
                 Ok(false)
@@ -447,7 +428,7 @@ where
             .ok_or(IndexerError::BlockNotFound(height))
     }
 
-    /// Reads the block that a fresh start, or a jump, begins from, and puts the cursor on it.
+    /// Reads the block a fresh start begins from, and puts the cursor on it.
     fn index_first_block(&self, height: BlockHeight) -> Result<(), IndexerError> {
         let block = self.rpc_get_block_at(height)?;
 
@@ -463,18 +444,6 @@ where
         self.store.save_cursor(block.height)?;
 
         Ok(())
-    }
-
-    /// Deletes every block the indexer holds, used when a restart jumps forward instead of catching up.
-    /// The window below the cursor is the only place blocks can be, so the range is bounded.
-    fn delete_window(&self, cursor: BlockHeight) -> Result<(), IndexerError> {
-        let oldest = cursor.saturating_sub(self.settings.retention_depth);
-
-        for height in (oldest..=cursor).rev() {
-            self.store.delete_block(height)?;
-        }
-
-        self.reset_mempool_watch_list_from(0)
     }
 
     /// Puts every mempool watch entry confirmed at `height` or above back to pending, because the blocks that

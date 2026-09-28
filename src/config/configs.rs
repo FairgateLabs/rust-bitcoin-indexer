@@ -39,36 +39,23 @@ pub struct IndexerSettings {
     /// monitor's max_monitoring_confirmations, so a watched transaction never loses its block while it is still being watched.
     #[serde(default = "default_retention_depth")]
     pub retention_depth: BlockHeight,
-
-    /// Resume from the stored cursor, indexing every block in between. When false, a restart jumps straight
-    /// to tip - retention_depth, and any output pattern or spending UTXO event in the skipped range is lost.
-    #[serde(default = "default_catch_up")]
-    pub catch_up: bool,
 }
 
 fn default_retention_depth() -> BlockHeight {
     DEFAULT_RETENTION_DEPTH
 }
 
-fn default_catch_up() -> bool {
-    DEFAULT_CATCH_UP
-}
-
 impl Default for IndexerSettings {
     fn default() -> Self {
         Self {
             retention_depth: DEFAULT_RETENTION_DEPTH,
-            catch_up: DEFAULT_CATCH_UP,
         }
     }
 }
 
 impl IndexerSettings {
-    pub fn new(retention_depth: BlockHeight, catch_up: bool) -> Self {
-        Self {
-            retention_depth,
-            catch_up,
-        }
+    pub fn new(retention_depth: BlockHeight) -> Self {
+        Self { retention_depth }
     }
 
     /// Validates the settings that can be checked without touching the chain.
@@ -92,16 +79,13 @@ mod tests {
         let defaults = IndexerSettings::default();
         assert!(defaults.validate().is_ok());
         assert_eq!(defaults.retention_depth, DEFAULT_RETENTION_DEPTH);
-        assert!(defaults.catch_up);
 
         for depth in 0..MIN_RETENTION_DEPTH {
-            let err = IndexerSettings::new(depth, true).validate().unwrap_err();
+            let err = IndexerSettings::new(depth).validate().unwrap_err();
             assert!(matches!(err, IndexerError::InvalidConfiguration(_)));
         }
 
-        assert!(IndexerSettings::new(MIN_RETENTION_DEPTH, true)
-            .validate()
-            .is_ok());
+        assert!(IndexerSettings::new(MIN_RETENTION_DEPTH).validate().is_ok());
     }
 
     // Settings left out take their defaults, and a setting that no longer exists fails to parse.
@@ -109,12 +93,10 @@ mod tests {
     fn parse() {
         let settings: IndexerSettings = serde_json::from_str(r#"{"retention_depth": 6}"#).unwrap();
         assert_eq!(settings.retention_depth, 6);
-        assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
 
         // An empty settings block takes every default.
         let settings: IndexerSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.retention_depth, DEFAULT_RETENTION_DEPTH);
-        assert_eq!(settings.catch_up, DEFAULT_CATCH_UP);
 
         let err =
             serde_json::from_str::<IndexerSettings>(r#"{"checkpoint_height": 10}"#).unwrap_err();

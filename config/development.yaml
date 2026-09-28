@@ -10,4 +10,3 @@ rpc:
 
 settings:
     retention_depth: 100 # Blocks kept on disk.
-    catch_up: true

@@ -50,8 +50,8 @@ pub fn dummy_tx(seed: u32) -> Transaction {
     }
 }
 
-pub fn settings(retention_depth: BlockHeight, catch_up: bool) -> Option<IndexerSettings> {
-    Some(IndexerSettings::new(retention_depth, catch_up))
+pub fn settings(retention_depth: BlockHeight) -> Option<IndexerSettings> {
+    Some(IndexerSettings::new(retention_depth))
 }
 
 // =============================================================================
@@ -158,10 +158,9 @@ impl TestNode {
         &self,
         storage: Rc<Storage>,
         retention_depth: BlockHeight,
-        catch_up: bool,
     ) -> Result<IndexerType, IndexerError> {
         let client = BitcoinClient::new_from_config(&self.rpc_config)?;
-        Indexer::new(client, storage, settings(retention_depth, catch_up))
+        Indexer::new(client, storage, settings(retention_depth))
     }
 
     pub fn tip(&self) -> anyhow::Result<BlockHeight> {

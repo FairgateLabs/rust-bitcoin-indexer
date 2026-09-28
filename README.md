@@ -26,7 +26,7 @@ This library is currently under development and may not be fully stable. It is n
 
 **The cursor** is the height of the highest block the indexer has read. It always has a block stored, and everything is counted from it: confirmations, what is inside the window, and what still has to be read.
 
-**Building an indexer reads nothing from the node.** The first `tick()` places the cursor: a fresh database starts one window below the tip, a restart resumes from its cursor, and a restart with `catch_up` disabled jumps to one window below the tip when that skips blocks. Until then `is_ready` is false and anything counted from the cursor fails with `NotSynced`.
+**Building an indexer reads nothing from the node.** The first `tick()` places the cursor: a fresh database starts one window below the tip, and a restart resumes from its cursor, reading every block it missed. Until then `is_ready` is false and anything counted from the cursor fails with `NotSynced`.
 
 **Every later tick** reads the node's tip and the block at the cursor, then does exactly one of:
 
@@ -90,11 +90,10 @@ Methods with the `rpc_` prefix answer from the node alone, with none of the inde
 | Setting | Default | Meaning |
 |---|---|---|
 | `retention_depth` | 100 | How many recent blocks stay on disk. Must be at least 2, and above the confirmations at which a consumer treats a transaction as final. |
-| `catch_up` | true | Resume from the stored cursor, reading every block in between. |
 
 Choosing `retention_depth` means balancing two things: it has to be deeper than any reorg the chain can produce, and at least the confirmations a consumer waits for, so a watched transaction keeps its block while it is still being watched. Disk usage grows with it.
 
-With `catch_up` disabled, a restart that would otherwise have blocks to read jumps straight to one window below the tip and deletes the window it held, so the blocks in between are never read. That is the faster way back to the tip when the events in the skipped range do not matter.
+A fresh database starts one window below the tip, so the blocks before that are never read. A restart always resumes from its cursor, one block per tick, however long it was down.
 
 ## Development Setup
 

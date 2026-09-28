@@ -52,7 +52,7 @@ fn fresh_start() -> anyhow::Result<()> {
 
     // A chain shorter than the window starts at genesis and indexes every block.
     let storage = TestStorage::new();
-    let indexer = node.indexer(storage.storage(), 5, true)?;
+    let indexer = node.indexer(storage.storage(), 5)?;
 
     // Until the first tick there is no cursor, so nothing can be answered from it.
     assert!(!indexer.is_ready()?);
@@ -79,7 +79,7 @@ fn fresh_start() -> anyhow::Result<()> {
     node.mine(17)?;
     let storage = TestStorage::new();
     let store = storage.store();
-    let indexer = node.indexer(storage.storage(), 5, true)?;
+    let indexer = node.indexer(storage.storage(), 5)?;
 
     assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 15);
@@ -92,22 +92,22 @@ fn fresh_start() -> anyhow::Result<()> {
     Ok(())
 }
 
-// A restart with catch_up resumes from its cursor and indexes every block it missed, however long the gap.
+// A restart resumes from its cursor and indexes every block it missed, however long the gap.
 #[test]
-fn restart_catch_up() -> anyhow::Result<()> {
+fn restart_resumes() -> anyhow::Result<()> {
     init_trace();
     let node = TestNode::start(101)?;
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     assert!(indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 98);
     node.sync(&indexer)?;
     drop(indexer);
 
     // A restart with the cursor at the tip has nothing to do.
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     assert!(!indexer.tick()?);
     assert_eq!(indexer.get_indexed_height()?, 101);
     assert!(!indexer.tick()?);
@@ -116,7 +116,7 @@ fn restart_catch_up() -> anyhow::Result<()> {
 
     // A gap longer than the window: every block is indexed, and only the last window stays stored.
     node.mine(10)?;
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     assert!(!indexer.is_ready()?);
 
     let mut indexed = 0;
@@ -143,59 +143,6 @@ fn restart_catch_up() -> anyhow::Result<()> {
     Ok(())
 }
 
-// A restart without catch_up jumps to tip - retention_depth only when that skips blocks, and deletes the old window.
-#[test]
-fn restart_jump() -> anyhow::Result<()> {
-    init_trace();
-    let node = TestNode::start(110)?;
-    let storage = TestStorage::new();
-    let store = storage.store();
-
-    let indexer = node.indexer(storage.storage(), 3, false)?;
-    assert!(indexer.tick()?);
-    assert_eq!(indexer.get_indexed_height()?, 107);
-    node.sync(&indexer)?;
-    drop(indexer);
-
-    // Four new blocks with a window of 3: the window starts right after the cursor, so nothing is skipped and the
-    // first tick reads the next block instead of jumping.
-    node.mine(4)?;
-    let indexer = node.indexer(storage.storage(), 3, false)?;
-    assert!(indexer.tick()?);
-    assert_eq!(indexer.get_indexed_height()?, 111);
-    node.sync(&indexer)?;
-
-    // A watched transaction confirmed in the window.
-    let watched = node.coinbase_txid_at(114)?;
-    indexer.add_mempool_watch(watched)?;
-    indexer.tick()?;
-    assert_eq!(store.get_mempool_watch_list()?, vec![(watched, Some(114))]);
-    drop(indexer);
-
-    // Ten new blocks: the restart jumps, deletes the old window with its height entries, and resets the watch list.
-    node.mine(10)?;
-    let indexer = node.indexer(storage.storage(), 3, false)?;
-
-    assert!(indexer.tick()?);
-    assert_eq!(indexer.get_indexed_height()?, 121);
-    for height in 112..=114 {
-        assert_eq!(store.get_block(height)?, None);
-    }
-    assert_eq!(store.get_tx_height(&watched)?, None);
-    assert_eq!(store.get_mempool_watch_list()?, vec![(watched, None)]);
-    assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(121)?);
-
-    // The skipped range is still answered by the node.
-    node.sync(&indexer)?;
-    node.assert_window_matches(&store, 122)?;
-    assert_eq!(
-        indexer.get_transaction(&watched, false)?,
-        confirmed(&node, &watched, 114, 11)?
-    );
-
-    Ok(())
-}
-
 // =============================================================================
 // Advancing and pruning
 // =============================================================================
@@ -208,7 +155,7 @@ fn tick_and_prune() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
     assert!(indexer.is_ready()?);
 
@@ -260,7 +207,7 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
     // One block replaced by a longer chain: the first tick deletes it, the next one indexes the new block.
@@ -340,7 +287,7 @@ fn chain_shrinks() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
     let tx_id = node.send(10_000)?;
@@ -387,7 +334,7 @@ fn chain_shrinks() -> anyhow::Result<()> {
     // The chain shrinks while the indexer is down, so a restart finds its cursor above the node's tip. The wallet set
     // the transaction's locktime to 110, so it can only be mined again from height 111.
     node.invalidate(111)?;
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     assert_eq!(store.get_cursor()?, Some(111));
 
     assert!(!indexer.tick()?);
@@ -414,7 +361,7 @@ fn reorg_deeper_than_window() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
 
     // Depth retention_depth - 1.
@@ -470,7 +417,7 @@ fn transaction_lifecycle() -> anyhow::Result<()> {
     let tx = node.sign_spend(outpoint, 90_000)?;
     let tx_id = tx.compute_txid();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
     // Watched before it is broadcast.
@@ -550,7 +497,7 @@ fn transaction_changes_height() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
     let tx_id = node.send(10_000)?;
@@ -601,7 +548,7 @@ fn double_spend_and_flip_back() -> anyhow::Result<()> {
     let tx_id = tx.compute_txid();
     let conflicting_id = conflicting.compute_txid();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     indexer.add_mempool_watch(tx_id)?;
 
     // The transaction has two confirmations.
@@ -672,7 +619,7 @@ fn mempool_watch() -> anyhow::Result<()> {
     let replacement_id = replacement.compute_txid();
     let original_id = original.compute_txid();
 
-    let indexer = node.indexer(storage.storage(), 10, true)?;
+    let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
     // An unwatched transaction in the mempool is answered by the node, and the flag decides whether it is reported.
@@ -766,7 +713,7 @@ fn window_boundary() -> anyhow::Result<()> {
     let storage = TestStorage::new();
     let store = storage.store();
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
 
     let tx_id = node.send(10_000)?;
@@ -817,7 +764,7 @@ fn get_block() -> anyhow::Result<()> {
     let stale = node.invalidate(100)?;
     node.mine(11)?;
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
 
     // Below the window, a hash is only accepted at its own height and on the node's chain.
@@ -886,7 +833,7 @@ fn fee_rate() -> anyhow::Result<()> {
         .map(|_| node.fund_utxo(100_000))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let indexer = node.indexer(storage.storage(), 3, true)?;
+    let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
 
     // A block with only its coinbase has no fee rate.
