@@ -4,7 +4,7 @@ use common::*;
 
 use bitcoin::{Block, Transaction, Txid};
 use bitcoin_indexer::store::IndexerStore;
-use bitcoin_indexer::{IndexerError, TransactionStatus};
+use bitcoin_indexer::{IndexerError, TickResult, TransactionStatus};
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::BlockHeight};
 
 /// The transaction as the node has it.
@@ -62,13 +62,13 @@ fn fresh_start() -> anyhow::Result<()> {
     ));
 
     // The first tick places the cursor, here at genesis because the chain is shorter than the window.
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 0);
     assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(0)?);
     assert!(!indexer.is_ready()?);
 
     for height in 1..=3 {
-        assert!(indexer.tick()?);
+        assert_eq!(indexer.tick()?, TickResult::Advanced);
         assert_eq!(indexer.get_indexed_height()?, height);
     }
     assert!(indexer.is_ready()?);
@@ -81,12 +81,12 @@ fn fresh_start() -> anyhow::Result<()> {
     let store = storage.store();
     let indexer = node.indexer(storage.storage(), 5)?;
 
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 15);
     assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(15)?);
     assert_eq!(store.get_block(14)?, None);
 
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_last_indexed_block()?.height, 16);
 
     Ok(())
@@ -101,16 +101,16 @@ fn restart_resumes() -> anyhow::Result<()> {
     let store = storage.store();
 
     let indexer = node.indexer(storage.storage(), 3)?;
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 98);
     node.sync(&indexer)?;
     drop(indexer);
 
     // A restart with the cursor at the tip has nothing to do.
     let indexer = node.indexer(storage.storage(), 3)?;
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Idle);
     assert_eq!(indexer.get_indexed_height()?, 101);
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Idle);
     assert_eq!(indexer.get_indexed_height()?, 101);
     drop(indexer);
 
@@ -121,7 +121,7 @@ fn restart_resumes() -> anyhow::Result<()> {
 
     let mut indexed = 0;
     for _ in 0..10 {
-        if indexer.tick()? {
+        if indexer.tick()? == TickResult::Advanced {
             indexed += 1;
         }
     }
@@ -161,18 +161,18 @@ fn tick_and_prune() -> anyhow::Result<()> {
 
     // At the tip, repeated ticks change nothing.
     for _ in 0..3 {
-        assert!(!indexer.tick()?);
+        assert_eq!(indexer.tick()?, TickResult::Idle);
         assert_eq!(indexer.get_indexed_height()?, 101);
     }
 
     // Two blocks between ticks take two ticks.
     node.mine(2)?;
     assert!(!indexer.is_ready()?);
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 102);
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 103);
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Idle);
     assert!(indexer.is_ready()?);
 
     // Storage stops growing: only the window is stored, and pruned blocks take their height entries with them.
@@ -214,19 +214,24 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     let old_hash = node.invalidate(110)?;
     node.mine(2)?;
 
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Reorged(1));
     assert_eq!(indexer.get_indexed_height()?, 109);
     assert_eq!(store.get_block(110)?, None);
 
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 110);
     assert_ne!(store.get_block(110)?.unwrap().hash, old_hash);
     node.sync(&indexer)?;
     node.assert_window_matches(&store, 102)?;
 
-    // Five blocks replaced by seven.
+    // Five blocks replaced by seven: the five are removed in one tick, down to the block both chains share.
     node.invalidate(107)?;
     node.mine(7)?;
+
+    assert_eq!(indexer.tick()?, TickResult::Reorged(5));
+    assert_eq!(indexer.get_indexed_height()?, 106);
+    assert_eq!(store.get_block(107)?, None);
+
     node.sync(&indexer)?;
     assert_eq!(indexer.get_indexed_height()?, 113);
     node.assert_window_matches(&store, 104)?;
@@ -252,7 +257,7 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     );
 
     let tip_hash = node.invalidate(121)?;
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Reorged(1));
     assert_eq!(indexer.get_indexed_height()?, 120);
     assert_eq!(store.get_block(121)?, None);
     assert_eq!(
@@ -261,7 +266,7 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     );
 
     node.reconsider(&tip_hash)?;
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 121);
     assert_eq!(store.get_block(121)?.unwrap().hash, tip_hash);
     assert_eq!(
@@ -270,9 +275,9 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     );
 
     // The cursor keeps moving.
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Idle);
     node.mine(1)?;
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height()?, 122);
 
     Ok(())
@@ -297,9 +302,9 @@ fn chain_shrinks() -> anyhow::Result<()> {
     let coinbase = node.coinbase_txid_at(113)?;
     assert_eq!(store.get_mempool_watch_list()?, vec![(tx_id, Some(111))]);
 
-    // The last three blocks are removed with no replacement.
+    // The last three blocks are removed with no replacement, in one tick.
     node.invalidate(111)?;
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Reorged(3));
     assert_eq!(indexer.get_indexed_height()?, 110);
     for height in 111..=113 {
         assert_eq!(store.get_block(height)?, None);
@@ -324,7 +329,7 @@ fn chain_shrinks() -> anyhow::Result<()> {
 
     // The next block confirms the transaction again.
     node.mine(1)?;
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(
         indexer.get_transaction(&tx_id, false)?,
         confirmed(&node, &tx_id, 111, 1)?
@@ -337,7 +342,7 @@ fn chain_shrinks() -> anyhow::Result<()> {
     let indexer = node.indexer(storage.storage(), 10)?;
     assert_eq!(store.get_cursor()?, Some(111));
 
-    assert!(!indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Reorged(1));
     assert_eq!(indexer.get_indexed_height()?, 110);
     assert_eq!(store.get_block(111)?, None);
 
@@ -364,9 +369,12 @@ fn reorg_deeper_than_window() -> anyhow::Result<()> {
     let indexer = node.indexer(storage.storage(), 3)?;
     node.sync(&indexer)?;
 
-    // Depth retention_depth - 1.
+    // Depth retention_depth - 1: the two blocks above the shared one are unwound in a single tick.
     node.invalidate(109)?;
     node.mine(3)?;
+    assert_eq!(indexer.tick()?, TickResult::Reorged(2));
+    assert_eq!(indexer.get_indexed_height()?, 108);
+
     node.sync(&indexer)?;
     assert_eq!(indexer.get_indexed_height()?, 111);
     node.assert_window_matches(&store, 109)?;
@@ -375,11 +383,8 @@ fn reorg_deeper_than_window() -> anyhow::Result<()> {
     node.invalidate(109)?;
     node.mine(4)?;
 
-    // Blocks 111 and 110 are unwound, then block 109 cannot be, because block 108 was pruned.
-    for expected in [110, 109] {
-        assert!(!indexer.tick()?);
-        assert_eq!(indexer.get_indexed_height()?, expected);
-    }
+    // The tick unwinds blocks 111 and 110, then cannot unwind block 109, because block 108 was pruned. Every later
+    // tick fails the same way, and the block it cannot unwind from stays stored.
     for _ in 0..2 {
         assert!(matches!(
             indexer.tick(),
@@ -387,6 +392,7 @@ fn reorg_deeper_than_window() -> anyhow::Result<()> {
         ));
         assert_eq!(indexer.get_indexed_height()?, 109);
         assert!(store.get_block(109)?.is_some());
+        assert_eq!(store.get_block(110)?, None);
     }
 
     // A chain that shrinks below the held blocks fails the same way, before deleting anything.
@@ -457,14 +463,14 @@ fn transaction_lifecycle() -> anyhow::Result<()> {
     );
 
     // The first tick confirms it, and each block adds a confirmation.
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(
         indexer.get_transaction(&tx_id, false)?,
         confirmed(&node, &tx_id, height, 1)?
     );
     assert_eq!(store.get_mempool_watch_list()?, vec![(tx_id, Some(height))]);
 
-    assert!(indexer.tick()?);
+    assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(
         indexer.get_transaction(&tx_id, true)?,
         confirmed(&node, &tx_id, height, 2)?
@@ -585,7 +591,7 @@ fn double_spend_and_flip_back() -> anyhow::Result<()> {
 
     // The entry stays on the watch list, pending, however many ticks read NotFound.
     for _ in 0..3 {
-        assert!(!indexer.tick()?);
+        assert_eq!(indexer.tick()?, TickResult::Idle);
     }
     assert_eq!(store.get_mempool_watch_list()?, vec![(tx_id, None)]);
 

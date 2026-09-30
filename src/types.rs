@@ -14,6 +14,17 @@ pub struct FullBlock {
     pub estimated_fee_rate: u64, // In sat/vB.
 }
 
+/// What one tick did.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickResult {
+    /// One block was indexed.
+    Advanced,
+    /// This many blocks were removed because they are no longer on the node's chain, and no block was indexed.
+    Reorged(u32),
+    /// Nothing to do: the cursor is at the node's tip.
+    Idle,
+}
+
 /// What the indexer knows about a transaction.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "status")]

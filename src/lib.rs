@@ -16,6 +16,6 @@ pub mod test_utils;
 pub use config::IndexerSettings;
 pub use errors::IndexerError;
 pub use indexer::Indexer;
-pub use types::{FullBlock, TransactionStatus};
+pub use types::{FullBlock, TickResult, TransactionStatus};
 
 pub type IndexerType = Indexer<BitcoinClient>;

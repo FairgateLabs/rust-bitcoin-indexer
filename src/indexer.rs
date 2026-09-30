@@ -3,7 +3,7 @@ use crate::{
     errors::IndexerError,
     helper::{confirmations, estimate_fee_rate, height_to_prune, is_below_window, window_start},
     store::IndexerStore,
-    types::{FullBlock, TransactionStatus},
+    types::{FullBlock, TickResult, TransactionStatus},
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
@@ -143,14 +143,13 @@ where
         }))
     }
 
-    /// Moves the indexer at most one block, then refreshes the mempool snapshot.
+    /// Moves the indexer one block forward, or unwinds a reorg, then refreshes the mempool snapshot.
     ///
-    /// Returns true only when a block was added. Removing blocks after a reorg or a shorter chain, and having no
-    /// new block to add, return false.
-    pub fn tick(&self) -> Result<bool, IndexerError> {
-        let added = self.advance()?;
+    /// A tick either indexes one block, removes the blocks a reorg took off the chain, or does nothing.
+    pub fn tick(&self) -> Result<TickResult, IndexerError> {
+        let result = self.advance()?;
         self.refresh_mempool_watch_list()?;
-        Ok(added)
+        Ok(result)
     }
 
     /// Registers a txid to follow in the mempool on every tick.
@@ -248,8 +247,8 @@ where
     // =========================================================================
 
     /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart resumes
-    /// from its cursor, reading every block in between. Returns whether it indexed a block.
-    fn start(&self, tip: BlockHeight) -> Result<bool, IndexerError> {
+    /// from its cursor, reading every block in between.
+    fn start(&self, tip: BlockHeight) -> Result<TickResult, IndexerError> {
         // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
         match self.store.get_cursor()? {
             // A fresh database has nothing to resume from. Start one window below the tip.
@@ -257,26 +256,26 @@ where
                 let window_start = window_start(tip, self.settings.retention_depth);
                 info!("No cursor stored, starting at height {window_start} (tip {tip})");
                 self.index_first_block(window_start)?;
-                Ok(true)
+                Ok(TickResult::Advanced)
             }
             // A restart resumes from its cursor, and the ticks that follow read every block up to the tip.
             Some(cursor) => {
                 info!("Resuming from height {cursor} (tip {tip})");
-                Ok(false)
+                Ok(TickResult::Idle)
             }
         }
     }
 
-    /// Moves the indexer at most one block. Returns true only when a block was added.
-    fn advance(&self) -> Result<bool, IndexerError> {
+    /// Indexes one block, or removes the blocks a reorg took off the chain.
+    fn advance(&self) -> Result<TickResult, IndexerError> {
         let tip = self.bitcoin_client.get_tip_height()?;
 
         if !self.started.get() {
-            let indexed = self.start(tip)?;
+            let result = self.start(tip)?;
             self.started.set(true);
 
-            if indexed {
-                return Ok(true);
+            if result != TickResult::Idle {
+                return Ok(result);
             }
         }
 
@@ -284,13 +283,32 @@ where
 
         // The node's chain is shorter than the indexed one.
         if cursor > tip {
+            warn!(
+                "Reorg: The node's chain is shorter than the indexed one. Cursor: {}, Tip: {}",
+                cursor, tip
+            );
+
             // Nothing is deleted when the indexer holds no block at the node's tip to continue from.
             if self.store.get_block(tip)?.is_none() {
                 return Err(IndexerError::ReorgDeeperThanWindow(tip));
             }
 
             self.remove_blocks_above(tip, cursor)?;
-            return Ok(false);
+            let removed = cursor.saturating_sub(tip);
+
+            // The block now at the cursor can be off the chain too, which is part of the same reorg.
+            let stored = self.store.get_block_or_err(tip)?;
+            let node_hash = self.rpc_get_block_at(tip)?.hash;
+            if node_hash == stored.hash {
+                return Ok(TickResult::Reorged(removed));
+            }
+
+            warn!(
+                "Reorg: The shorter chain also differs at height {}. Indexed {}, node {}",
+                tip, stored.hash, node_hash
+            );
+
+            return Ok(TickResult::Reorged(removed + self.unwind_reorg(tip)?));
         }
 
         let last_block = self.store.get_block_or_err(cursor)?;
@@ -303,19 +321,12 @@ where
                 cursor, last_block.hash, node_block.hash
             );
 
-            // The block is kept when there is no block below it to continue from, and below genesis there is none.
-            let below = cursor.saturating_sub(1);
-            if cursor == 0 || self.store.get_block(below)?.is_none() {
-                return Err(IndexerError::ReorgDeeperThanWindow(below));
-            }
-
-            self.remove_last_indexed_block(cursor)?;
-            return Ok(false);
+            return Ok(TickResult::Reorged(self.unwind_reorg(cursor)?));
         }
 
         // No new block on the node.
         if cursor == tip {
-            return Ok(false);
+            return Ok(TickResult::Idle);
         }
 
         // Cursor < tip, so the node has a new block.
@@ -329,13 +340,43 @@ where
                 next_height, cursor
             );
 
-            return Ok(false);
+            return Ok(TickResult::Idle);
         }
 
         info!("Indexing block {} of {}", next_height, tip);
         self.index_block(next_block)?;
 
-        Ok(true)
+        Ok(TickResult::Advanced)
+    }
+
+    /// Removes the block at the cursor and every block below it that the node no longer has on its chain, down to the
+    /// first block both agree on. Returns how many blocks were removed.
+    fn unwind_reorg(&self, cursor: BlockHeight) -> Result<u32, IndexerError> {
+        let mut height = cursor;
+        let mut removed: u32 = 0;
+
+        loop {
+            // Below genesis there is nothing to continue from.
+            if height == 0 {
+                return Err(IndexerError::ReorgDeeperThanWindow(0));
+            }
+
+            // The block is kept when the indexer holds no block below it to continue from.
+            let below = height - 1;
+            let Some(block_below) = self.store.get_block(below)? else {
+                return Err(IndexerError::ReorgDeeperThanWindow(below));
+            };
+
+            self.remove_last_indexed_block(height)?;
+            removed = removed.saturating_add(1);
+
+            // The node has the same block below, so the chains meet there and the unwind stops.
+            if self.rpc_get_block_at(below)?.hash == block_below.hash {
+                return Ok(removed);
+            }
+
+            height = below;
+        }
     }
 
     /// Deletes the indexed blocks above the node's tip, puts the mempool watch entries they confirmed back

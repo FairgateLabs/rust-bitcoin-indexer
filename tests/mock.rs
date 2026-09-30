@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash;
 use bitcoin::{BlockHash, Transaction};
-use bitcoin_indexer::{FullBlock, Indexer, IndexerError, TransactionStatus};
+use bitcoin_indexer::{FullBlock, Indexer, IndexerError, TickResult, TransactionStatus};
 use bitcoincore_rpc::json::{GetBlockHeaderResult, GetRawTransactionResult};
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::MockBitcoinClientApi,
@@ -170,7 +170,7 @@ fn tick_prev_hash_mismatch() {
 
     let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
 
-    assert!(!indexer.tick().unwrap());
+    assert_eq!(indexer.tick().unwrap(), TickResult::Idle);
     assert_eq!(indexer.get_indexed_height().unwrap(), 10);
     assert_eq!(store.get_block(11).unwrap(), None);
 }
@@ -326,7 +326,7 @@ fn interrupted_tick_recovers() {
 
     let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
 
-    assert!(indexer.tick().unwrap());
+    assert_eq!(indexer.tick().unwrap(), TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height().unwrap(), 11);
     assert_eq!(store.get_block(11).unwrap(), Some(full_block(11, vec![])));
     drop(indexer);
@@ -343,7 +343,7 @@ fn interrupted_tick_recovers() {
 
     let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
 
-    assert!(indexer.tick().unwrap());
+    assert_eq!(indexer.tick().unwrap(), TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height().unwrap(), 0);
     assert_eq!(store.get_block(0).unwrap(), Some(full_block(0, vec![])));
     drop(indexer);
@@ -384,7 +384,7 @@ fn interrupted_tick_recovers() {
     assert_eq!(store.get_block(11).unwrap(), None);
     assert_eq!(store.get_tx_height(&txs[0].compute_txid()).unwrap(), None);
 
-    assert!(indexer.tick().unwrap());
+    assert_eq!(indexer.tick().unwrap(), TickResult::Advanced);
     assert_eq!(indexer.get_indexed_height().unwrap(), 11);
     assert_eq!(store.get_block(11).unwrap().unwrap().estimated_fee_rate, 5);
     assert_eq!(
@@ -447,20 +447,22 @@ fn reorg_of_big_block() {
         .unwrap();
 
     let mut node = mock_node(10);
-    // The node's chain has a different block at height 10.
-    node.expect_get_block_by_height().returning(|height| {
-        Ok(Some(BlockInfo {
-            hash: block_hash(77),
-            ..chain_block(*height, vec![])
-        }))
-    });
+    // The node's chain has a different block at height 10, and the same block as the indexer below it.
+    node.expect_get_block_by_height()
+        .returning(|height| match *height {
+            10 => Ok(Some(BlockInfo {
+                hash: block_hash(77),
+                ..chain_block(10, vec![])
+            })),
+            _ => Ok(Some(chain_block(*height, vec![]))),
+        });
     node.expect_check_in_mempool()
         .times(1)
         .returning(|_| Ok(true));
 
     let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
 
-    assert!(!indexer.tick().unwrap());
+    assert_eq!(indexer.tick().unwrap(), TickResult::Reorged(1));
     assert_eq!(indexer.get_indexed_height().unwrap(), 9);
     assert_eq!(
         store.get_mempool_watch_list().unwrap(),

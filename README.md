@@ -8,8 +8,8 @@ This library is currently under development and may not be fully stable. It is n
 
 ## Key Features
 
-- 🧱 **Sequential feed**: each call to `tick()` moves the indexer at most one block, so a consumer sees every block once and in order, and can stop at any point and resume later.
-- ↩️ **Reorg aware**: a block that leaves the chain is removed with the transaction entries it brought, one block per tick, and the new chain is then indexed in the same order.
+- 🧱 **Sequential feed**: each call to `tick()` moves the indexer at most one block forward, so a consumer sees every block once and in order, and can stop at any point and resume later.
+- ↩️ **Reorg aware**: the blocks that left the chain are removed in one tick, with the transaction entries they brought, and the new chain is then indexed block by block.
 - 🪟 **Bounded storage**: only the last `retention_depth` blocks are kept, so disk usage stops growing no matter how long the indexer runs.
 - 🔎 **Transaction and block queries**: the status of a transaction, with its confirmations, and any block of the chain the indexer has processed.
 - 📬 **Mempool watch list**: txids a consumer registers are checked against the node's mempool once per tick, so repeated queries about them cost nothing extra.
@@ -31,12 +31,14 @@ This library is currently under development and may not be fully stable. It is n
 **Every later tick** reads the node's tip and the block at the cursor, then does exactly one of:
 
 1. the node's chain is shorter than the indexed one, so the blocks above its tip are removed;
-2. the node has a different block at the cursor, so that block is removed and the cursor steps back;
+2. the node has a different block at the cursor, so that block and every block below it that the node no longer has are removed, down to the first block both chains share;
 3. the cursor is at the tip, so there is nothing to do;
 4. the next block does not build on the block at the cursor, so nothing is stored and the next tick resolves it;
 5. otherwise the next block is stored, the cursor moves onto it, and the block that falls out of the window is deleted.
 
-It then refreshes the mempool watch list: entries already in a stored block are marked confirmed, and the rest are checked against the node's mempool. `tick()` returns `true` only in case 5.
+It then refreshes the mempool watch list: entries already in a stored block are marked confirmed, and the rest are checked against the node's mempool.
+
+`tick()` reports which of those happened: `Advanced` in case 5, `Reorged(n)` with the number of blocks removed in cases 1 and 2, and `Idle` in cases 3 and 4. A tick never removes and indexes in the same call, so the new chain is indexed by the ticks that follow, one block each.
 
 ## Public API
 
@@ -46,7 +48,7 @@ The `Indexer` struct exposes:
 |---|---|
 | `new` | Build from an RPC client, a store and optional settings. Validates the settings and reads nothing from the node. |
 | `is_ready` | True once the cursor has reached the node's tip, so there is nothing left to read. False before the first tick. |
-| `tick` | Place the cursor on the first call, then advance at most one block and refresh the mempool watch list. |
+| `tick` | Place the cursor on the first call, then index one block or unwind a reorg, and refresh the mempool watch list. Reports which of those happened. |
 | `get_indexed_height` | Height of the highest block read. |
 | `get_last_indexed_block` | That block, with its transactions and fee rate. |
 | `get_block` | The block with a given height and hash, from storage or from the node. |
@@ -73,7 +75,7 @@ Methods with the `rpc_` prefix answer from the node alone, with none of the inde
 
 > 💡 **The window is the source of truth.** Below it the node is trusted, above it only the indexer's own chain counts. That is what keeps every answer consistent with the blocks a consumer has already been given.
 
-> ⚠️ **Reorgs deeper than `retention_depth` are out of scope.** Such a reorg fails with `ReorgDeeperThanWindow` and the indexer stops advancing, so choose a depth well past anything the chain produces.
+> ⚠️ **Reorgs deeper than `retention_depth` are out of scope.** The unwind removes what it can and then fails with `ReorgDeeperThanWindow`, and every later tick fails the same way, so choose a depth well past anything the chain produces.
 
 > ⚠️ **Use the same `retention_depth` across restarts.** Pruning is computed from the configured depth, so lowering it leaves the blocks below the new window, and their transaction entries, in storage.
 
