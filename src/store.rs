@@ -269,7 +269,7 @@ impl StoreClient for IndexerStore {
 
     fn add_to_mempool_watch(&self, txid: Txid) -> Result<(), IndexerStoreError> {
         let key = self.get_key(StoreKey::MempoolWatchList)?;
-        let mut list: Vec<Txid> = self.store.get(key.clone(), None)?.unwrap_or_default();
+        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
         if !list.contains(&txid) {
             list.push(txid);
             self.store.set(key, list, None)?;
@@ -279,7 +279,7 @@ impl StoreClient for IndexerStore {
 
     fn remove_from_mempool_watch(&self, txid: &Txid) -> Result<(), IndexerStoreError> {
         let key = self.get_key(StoreKey::MempoolWatchList)?;
-        let mut list: Vec<Txid> = self.store.get(key.clone(), None)?.unwrap_or_default();
+        let mut list: Vec<Txid> = self.store.get(&key, None)?.unwrap_or_default();
         list.retain(|t| t != txid);
         self.store.set(key, list, None)?;
         Ok(())
