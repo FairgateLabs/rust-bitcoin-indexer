@@ -61,6 +61,39 @@ The `Indexer` struct exposes:
 
 Methods with the `rpc_` prefix answer from the node alone, with none of the indexer's own state involved.
 
+## Usage
+
+```rust
+let config = settings::load::<IndexerConfig>()?;
+
+let bitcoin_client = BitcoinClient::new_from_config(&config.rpc)?;
+let storage = Rc::new(Storage::new(&config.storage)?);
+let indexer = Indexer::new(bitcoin_client, storage, Some(config.settings))?;
+
+// One step of the chain, called from the consumer's own loop.
+match indexer.tick()? {
+    TickResult::Advanced => info!("indexed block {}", indexer.get_indexed_height()?),
+    TickResult::Reorged(blocks) => info!("{blocks} blocks left the chain"),
+    TickResult::Idle => (),
+}
+```
+
+A transaction is followed by registering it and reading its status:
+
+```rust
+indexer.add_mempool_watch(tx_id)?;
+
+match indexer.get_transaction(&tx_id, true)? {
+    TransactionStatus::Confirmed { block_height, confirmations, .. } => {
+        info!("mined at {block_height} with {confirmations} confirmations")
+    }
+    TransactionStatus::InMempool => info!("in the mempool"),
+    TransactionStatus::NotFound => info!("unknown to the indexer and to the node"),
+}
+
+indexer.remove_mempool_watch(&tx_id)?;
+```
+
 ### How a transaction is answered
 
 `get_transaction(txid, include_mempool)` tries three steps, in order:
