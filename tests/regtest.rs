@@ -476,7 +476,7 @@ fn transaction_lifecycle() -> anyhow::Result<()> {
         confirmed(&node, &tx_id, height, 2)?
     );
     assert_eq!(indexer.rpc_get_tx_confirmations(&tx_id)?, Some(2));
-    assert!(indexer.rpc_is_utxo_unspent(&tx_id, 0, false)?);
+    assert!(!indexer.rpc_is_utxo_spent(&tx_id, 0, false)?);
 
     // A reorg that mines it again at the same height, in a different block.
     let old_hash = node.invalidate(height)?;

@@ -57,7 +57,7 @@ The `Indexer` struct exposes:
 | `get_stored_transaction` | The same status, from the indexer alone. |
 | `get_estimated_fee_rate` | Fee rate of the last indexed block, once the indexer is at the tip. |
 | `add_mempool_watch` / `remove_mempool_watch` | Register or drop a txid to follow in the mempool. |
-| `rpc_is_utxo_unspent` / `rpc_get_tx_confirmations` | Live node checks, passed straight through. |
+| `rpc_is_utxo_spent` / `rpc_get_tx_confirmations` | Live node checks, passed straight through. |
 
 Methods with the `rpc_` prefix answer from the node alone, with none of the indexer's own state involved.
 

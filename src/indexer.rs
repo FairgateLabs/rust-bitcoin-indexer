@@ -224,8 +224,8 @@ where
     }
 
     /// Live RPC check for UTXO spendability, bypassing everything the indexer stores.
-    /// True when the UTXO is unspent, counting the mempool when `include_mempool` is true.
-    pub fn rpc_is_utxo_unspent(
+    /// True when the UTXO is spent, counting the mempool when `include_mempool` is true.
+    pub fn rpc_is_utxo_spent(
         &self,
         tx_id: &Txid,
         vout: u32,
@@ -233,7 +233,7 @@ where
     ) -> Result<bool, IndexerError> {
         Ok(self
             .bitcoin_client
-            .is_utxo_unspent(tx_id, vout, include_mempool)?)
+            .is_utxo_spent(tx_id, vout, include_mempool)?)
     }
 
     /// Live `getrawtransaction` confirmation probe. `None` when the node does not know the transaction,
