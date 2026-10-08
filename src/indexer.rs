@@ -67,6 +67,12 @@ where
         self.store.get_cursor()?.ok_or(IndexerError::NotSynced)
     }
 
+    /// Height of the first block this database ever indexed, so nothing below it was ever read. Fails with `NotSynced`
+    /// until the first tick places it.
+    pub fn get_first_indexed_height(&self) -> Result<BlockHeight, IndexerError> {
+        self.store.get_first_height()?.ok_or(IndexerError::NotSynced)
+    }
+
     /// The highest block the indexer has read. Always present once the first tick has run.
     pub fn get_last_indexed_block(&self) -> Result<FullBlock, IndexerError> {
         self.store.get_block_or_err(self.get_indexed_height()?)
@@ -469,7 +475,7 @@ where
             .ok_or(IndexerError::BlockNotFound(height))
     }
 
-    /// Reads the block a fresh start begins from, and puts the cursor on it.
+    /// Reads the block a fresh start begins from, records it as the first one ever indexed, and puts the cursor on it.
     fn index_first_block(&self, height: BlockHeight) -> Result<(), IndexerError> {
         let block = self.rpc_get_block_at(height)?;
 
@@ -482,6 +488,7 @@ where
             txs: block.txs,
             estimated_fee_rate,
         })?;
+        self.store.save_first_height(block.height)?;
         self.store.save_cursor(block.height)?;
 
         Ok(())

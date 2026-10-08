@@ -60,6 +60,10 @@ fn fresh_start() -> anyhow::Result<()> {
         indexer.get_indexed_height(),
         Err(IndexerError::NotSynced)
     ));
+    assert!(matches!(
+        indexer.get_first_indexed_height(),
+        Err(IndexerError::NotSynced)
+    ));
 
     // The first tick places the cursor, here at genesis because the chain is shorter than the window.
     assert_eq!(indexer.tick()?, TickResult::Advanced);
@@ -86,8 +90,11 @@ fn fresh_start() -> anyhow::Result<()> {
     assert_eq!(indexer.get_last_indexed_block()?.hash, node.hash_at(15)?);
     assert_eq!(store.get_block(14)?, None);
 
+    // The first block ever indexed is remembered, and advancing does not move it.
+    assert_eq!(indexer.get_first_indexed_height()?, 15);
     assert_eq!(indexer.tick()?, TickResult::Advanced);
     assert_eq!(indexer.get_last_indexed_block()?.height, 16);
+    assert_eq!(indexer.get_first_indexed_height()?, 15);
 
     Ok(())
 }
@@ -112,6 +119,7 @@ fn restart_resumes() -> anyhow::Result<()> {
     assert_eq!(indexer.get_indexed_height()?, 101);
     assert_eq!(indexer.tick()?, TickResult::Idle);
     assert_eq!(indexer.get_indexed_height()?, 101);
+    assert_eq!(indexer.get_first_indexed_height()?, 98, "a restart keeps the first block it ever indexed");
     drop(indexer);
 
     // A gap longer than the window: every block is indexed, and only the last window stays stored.

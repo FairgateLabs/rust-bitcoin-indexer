@@ -19,6 +19,7 @@ enum StoreKey {
     Block(BlockHeight), // The block indexed at this height. Deleted when it leaves the retention window, and when a reorg takes it off the chain.
     TxHeight(Txid), // Which block height holds a transaction. Written with its block and deleted with it.
     Cursor,         // Height of the highest indexed block, which is also the highest block stored.
+    FirstHeight,    // Height of the first block this database ever indexed. Written once, on a fresh start.
     MempoolWatchList, // Txids a consumer asked to follow in the mempool, each with its confirmation height once mined.
     MempoolSnapshot, // Which watched transactions the node held in its mempool when the last tick ended.
 }
@@ -34,6 +35,7 @@ impl IndexerStore {
             StoreKey::Block(height) => format!("{prefix}/block/{height}"),
             StoreKey::TxHeight(tx_id) => format!("{prefix}/tx/{tx_id}"),
             StoreKey::Cursor => format!("{prefix}/cursor"),
+            StoreKey::FirstHeight => format!("{prefix}/first_height"),
             StoreKey::MempoolWatchList => format!("{prefix}/mempool_watch_list"),
             StoreKey::MempoolSnapshot => format!("{prefix}/mempool_snapshot"),
         }
@@ -134,6 +136,19 @@ impl IndexerStore {
     /// Saves the height of the block at the cursor.
     pub fn save_cursor(&self, height: BlockHeight) -> Result<(), IndexerError> {
         let key = self.get_key(StoreKey::Cursor);
+        self.store.set(key, height, None)?;
+        Ok(())
+    }
+
+    /// Retrieves the height of the first block this database ever indexed, if the first tick has run.
+    pub fn get_first_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
+        let key = self.get_key(StoreKey::FirstHeight);
+        Ok(self.store.get(key, None)?)
+    }
+
+    /// Saves the height of the first block this database ever indexed.
+    pub fn save_first_height(&self, height: BlockHeight) -> Result<(), IndexerError> {
+        let key = self.get_key(StoreKey::FirstHeight);
         self.store.set(key, height, None)?;
         Ok(())
     }
