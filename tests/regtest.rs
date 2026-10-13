@@ -268,9 +268,10 @@ fn reorg_unwinds() -> anyhow::Result<()> {
     assert_eq!(indexer.tick()?, TickResult::Reorged(1));
     assert_eq!(indexer.get_indexed_height()?, 120);
     assert_eq!(store.get_block(121)?, None);
+    // The transaction is back in the node's mempool, but nobody watches it, so the indexer holds nothing about it.
     assert_eq!(
         indexer.get_transaction(&tx_id, true)?,
-        TransactionStatus::InMempool
+        TransactionStatus::NotFound
     );
 
     node.reconsider(&tip_hash)?;
@@ -442,21 +443,22 @@ fn transaction_lifecycle() -> anyhow::Result<()> {
         TransactionStatus::NotFound
     );
 
-    // Broadcast: the node answers before the next tick, and the snapshot after it.
+    // Broadcast: only the tick that writes the snapshot makes it visible, the node is never asked about the mempool.
     node.client.send_transaction(&tx)?;
-    for tick in [false, true] {
-        if tick {
-            indexer.tick()?;
-        }
-        assert_eq!(
-            indexer.get_transaction(&tx_id, true)?,
-            TransactionStatus::InMempool
-        );
-        assert_eq!(
-            indexer.get_transaction(&tx_id, false)?,
-            TransactionStatus::NotFound
-        );
-    }
+    assert_eq!(
+        indexer.get_transaction(&tx_id, true)?,
+        TransactionStatus::NotFound
+    );
+
+    indexer.tick()?;
+    assert_eq!(
+        indexer.get_transaction(&tx_id, true)?,
+        TransactionStatus::InMempool
+    );
+    assert_eq!(
+        indexer.get_transaction(&tx_id, false)?,
+        TransactionStatus::NotFound
+    );
 
     // Mined in the first of two blocks. Before the indexer reaches it, it is not confirmed yet.
     node.mine(2)?;
@@ -636,25 +638,23 @@ fn mempool_watch() -> anyhow::Result<()> {
     let indexer = node.indexer(storage.storage(), 10)?;
     node.sync(&indexer)?;
 
-    // An unwatched transaction in the mempool is answered by the node, and the flag decides whether it is reported.
-    // The indexer holds nothing about it, since only watched txids reach the snapshot.
+    // An unwatched transaction in the mempool is invisible, ticks or no ticks, because only watched txids reach the
+    // snapshot and the node is only asked about confirmations.
     let unwatched = node.send(10_000)?;
     for tick in [false, true] {
         if tick {
             indexer.tick()?;
         }
-        assert_eq!(
-            indexer.get_stored_transaction(&unwatched, true)?,
-            TransactionStatus::NotFound
-        );
-        assert_eq!(
-            indexer.get_transaction(&unwatched, true)?,
-            TransactionStatus::InMempool
-        );
-        assert_eq!(
-            indexer.get_transaction(&unwatched, false)?,
-            TransactionStatus::NotFound
-        );
+        for include_mempool in [false, true] {
+            assert_eq!(
+                indexer.get_stored_transaction(&unwatched, include_mempool)?,
+                TransactionStatus::NotFound
+            );
+            assert_eq!(
+                indexer.get_transaction(&unwatched, include_mempool)?,
+                TransactionStatus::NotFound
+            );
+        }
     }
 
     // A transaction the node never saw.

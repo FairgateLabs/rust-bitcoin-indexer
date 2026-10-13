@@ -181,26 +181,20 @@ fn get_transaction_from_node() {
     let tx = dummy_tx(42);
     let tx_id = tx.compute_txid();
 
-    // Each case is the node's transaction answer, the height its header call returns, and the expected status
-    // with and without include_mempool. A case with no header height panics if the header is asked for.
+    // Each case is the node's transaction answer and the height its header call returns. None of them is a block the
+    // indexer can count, so all of them read NotFound, with and without include_mempool. A case with no header height
+    // panics if the header is asked for.
     let cases = [
         // The node's transaction index still points at a block a reorg removed, with zero confirmations.
         (
             raw_tx_info(&tx, Some(BlockHash::all_zeros()), Some(0)),
             None,
-            TransactionStatus::NotFound,
-            TransactionStatus::NotFound,
         ),
         // The node's new chain has the transaction at height 10, where the indexer still holds the old block.
-        (
-            raw_tx_info(&tx, Some(block_hash(77)), Some(1)),
-            Some(10),
-            TransactionStatus::InMempool,
-            TransactionStatus::NotFound,
-        ),
+        (raw_tx_info(&tx, Some(block_hash(77)), Some(1)), Some(10)),
     ];
 
-    for (answer, header_height, with_mempool, without_mempool) in cases {
+    for (answer, header_height) in cases {
         let storage = TestStorage::new();
         storage.store().save_block(&full_block(10, vec![])).unwrap();
         storage.store().save_cursor(10).unwrap();
@@ -215,11 +209,12 @@ fn get_transaction_from_node() {
 
         let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
 
-        assert_eq!(indexer.get_transaction(&tx_id, true).unwrap(), with_mempool);
-        assert_eq!(
-            indexer.get_transaction(&tx_id, false).unwrap(),
-            without_mempool
-        );
+        for include_mempool in [false, true] {
+            assert_eq!(
+                indexer.get_transaction(&tx_id, include_mempool).unwrap(),
+                TransactionStatus::NotFound
+            );
+        }
     }
 
     // A node that fails to answer, on the transaction lookup or on the header call,

@@ -199,17 +199,16 @@ where
     /// What the indexer knows about a transaction, in three steps:
     /// 1. In a block the indexer holds, which answers from storage.
     /// 2. In the mempool snapshot of the last tick that completed, when the caller asked about the mempool.
-    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window
-    ///    and one in the mempool that nobody watches.
+    /// 3. Otherwise the node is asked once, which covers a transaction mined in a block below the window.
     ///
-    /// `include_mempool` suppresses mempool answers from the indexer's snapshot, it does not stop the node being asked.
+    /// The node is only asked about confirmations, so a transaction in the mempool is reported by step 2 or not at all.
     pub fn get_transaction(
         &self,
         tx_id: &Txid,
         include_mempool: bool,
     ) -> Result<TransactionStatus, IndexerError> {
         match self.get_stored_transaction(tx_id, include_mempool)? {
-            TransactionStatus::NotFound => self.get_transaction_from_node(tx_id, include_mempool),
+            TransactionStatus::NotFound => self.get_transaction_from_node(tx_id),
             status => Ok(status),
         }
     }
@@ -514,32 +513,18 @@ where
         Ok(())
     }
 
-    /// The node is asked once whether the transaction is mined, in the mempool, or unknown. A mined
-    /// transaction costs one more call, for the height of its block, and is only reported `Confirmed` when that
-    /// block is below everything the indexer holds.
-    fn get_transaction_from_node(
-        &self,
-        tx_id: &Txid,
-        include_mempool: bool,
-    ) -> Result<TransactionStatus, IndexerError> {
-        // A transaction ahead of the indexer cannot be evaluated for confirmation, so it is reported as pending.
-        let not_confirmed = || {
-            if include_mempool {
-                TransactionStatus::InMempool
-            } else {
-                TransactionStatus::NotFound
-            }
-        };
-
+    /// The node is asked once whether the transaction is mined on its chain. A mined transaction costs one more call,
+    /// for the height of its block, and is only reported `Confirmed` when that block is below everything the indexer
+    /// holds. Everything else is `NotFound`: the mempool is answered from the watch list snapshot alone.
+    fn get_transaction_from_node(&self, tx_id: &Txid) -> Result<TransactionStatus, IndexerError> {
         let info = match self.bitcoin_client.get_raw_transaction_info(tx_id)? {
             Some(info) => info,
             None => return Ok(TransactionStatus::NotFound),
         };
 
-        // No block hash means the node holds it in its mempool.
-        let block_hash = match info.blockhash {
-            None => return Ok(not_confirmed()),
-            Some(block_hash) => block_hash,
+        // No block hash means the node holds it in its mempool, which only a watched txid answers.
+        let Some(block_hash) = info.blockhash else {
+            return Ok(TransactionStatus::NotFound);
         };
 
         // A block hash with zero confirmations is a block that is not on the chain.
@@ -556,7 +541,7 @@ where
 
         // A block above the cursor, or at a height the indexer holds with a different block, is one the indexer has not processed.
         if !is_below_window(height, cursor, height_is_stored) {
-            return Ok(not_confirmed());
+            return Ok(TransactionStatus::NotFound);
         }
 
         let tx = info.transaction().map_err(|e| {

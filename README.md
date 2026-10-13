@@ -12,7 +12,7 @@ This library is currently under development and may not be fully stable. It is n
 - ↩️ **Reorg aware**: the blocks that left the chain are removed in one tick, with the transaction entries they brought, and the new chain is then indexed block by block.
 - 🪟 **Bounded storage**: only the last `retention_depth` blocks are kept, so disk usage stops growing no matter how long the indexer runs.
 - 🔎 **Transaction and block queries**: the status of a transaction, with its confirmations, and any block of the chain the indexer has processed.
-- 📬 **Mempool watch list**: txids a consumer registers are checked against the node's mempool once per tick, so repeated queries about them cost nothing extra.
+- 📬 **Mempool watch list**: txids a consumer registers are checked against the node's mempool once per tick, so repeated queries about them cost nothing extra. It is the only source of mempool answers.
 - ⛽ **Fee estimation**: each indexed block carries a fee rate estimated.
 - 💾 **Persistent storage**: all state is persisted through `rust-bitvmx-storage-backend`, and a restart continues from where the previous run stopped.
 
@@ -53,7 +53,7 @@ The `Indexer` struct exposes:
 | `get_last_indexed_block` | That block, with its transactions and fee rate. |
 | `get_block` | The block with a given height and hash, from storage or from the node. |
 | `get_stored_block` | The same block, from the indexer alone. |
-| `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node when the indexer holds nothing. |
+| `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node about confirmations when the indexer holds nothing. |
 | `get_stored_transaction` | The same status, from the indexer alone. |
 | `get_estimated_fee_rate` | Fee rate of the last indexed block, once the indexer is at the tip. |
 | `add_mempool_watch` / `remove_mempool_watch` | Register or drop a txid to follow in the mempool. |
@@ -78,7 +78,7 @@ match indexer.tick()? {
 }
 ```
 
-A transaction is followed by registering it and reading its status:
+A transaction is followed by registering it, which is what makes an `InMempool` answer possible, and reading its status:
 
 ```rust
 indexer.add_mempool_watch(tx_id)?;
@@ -88,7 +88,7 @@ match indexer.get_transaction(&tx_id, true)? {
         info!("mined at {block_height} with {confirmations} confirmations")
     }
     TransactionStatus::InMempool => info!("in the mempool"),
-    TransactionStatus::NotFound => info!("unknown to the indexer and to the node"),
+    TransactionStatus::NotFound => info!("in no block the indexer can count, and not in the mempool snapshot"),
 }
 
 indexer.remove_mempool_watch(&tx_id)?;
@@ -100,7 +100,9 @@ indexer.remove_mempool_watch(&tx_id)?;
 
 1. **A block the indexer holds.** Answers `Confirmed` with the transaction, its block's height and hash, and the confirmations counted from the cursor.
 2. **The mempool snapshot**, when `include_mempool` is true and the txid is on the watch list. Answers `InMempool`.
-3. **The node**, which covers a transaction mined below the window and one in the mempool that nobody watches. It answers `Confirmed` only for a block below everything the indexer holds. A transaction in a block the indexer has not reached yet, or in a block it has not unwound yet, is reported as pending: `InMempool` when `include_mempool` is true, `NotFound` when it is false.
+3. **The node**, which covers a transaction mined below the window. It is only asked about confirmations, and answers `Confirmed` only for a block below everything the indexer holds. Anything else is `NotFound`: a transaction in the node's mempool, one in a block the indexer has not reached yet, and one in a block it has not unwound yet.
+
+So the mempool is answered by step 2 or not at all: a transaction the consumer did not put on the watch list is never reported `InMempool`, and one that was just broadcast reads `NotFound` until the next tick writes the snapshot.
 
 `get_stored_transaction(txid, include_mempool)` stops after step 2, for a caller that wants no node call and reads `NotFound` as "the indexer holds nothing about it".
 
