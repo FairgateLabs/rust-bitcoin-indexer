@@ -4,6 +4,7 @@ use crate::errors::IndexerError;
 use crate::types::FullBlock;
 use bitcoin::{Transaction, Txid};
 use bitvmx_bitcoin_rpc::types::BlockHeight;
+use storage_backend::key::StorageKey;
 use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
 
@@ -29,26 +30,27 @@ impl IndexerStore {
         Ok(Self { store })
     }
 
-    fn get_key(&self, key: StoreKey) -> String {
+    fn get_key(&self, key: StoreKey) -> Result<StorageKey, IndexerError> {
         let prefix = "indexer";
-        match key {
-            StoreKey::Block(height) => format!("{prefix}/block/{height}"),
-            StoreKey::TxHeight(tx_id) => format!("{prefix}/tx/{tx_id}"),
-            StoreKey::Cursor => format!("{prefix}/cursor"),
-            StoreKey::FirstHeight => format!("{prefix}/first_height"),
-            StoreKey::MempoolWatchList => format!("{prefix}/mempool_watch_list"),
-            StoreKey::MempoolSnapshot => format!("{prefix}/mempool_snapshot"),
-        }
+        let key = match key {
+            StoreKey::Block(height) => StorageKey::new([prefix, "block", height.to_string().as_str()]),
+            StoreKey::TxHeight(tx_id) => StorageKey::new([prefix, "tx", tx_id.to_string().as_str()]),
+            StoreKey::Cursor => StorageKey::new([prefix, "cursor"]),
+            StoreKey::FirstHeight => StorageKey::new([prefix, "first_height"]),
+            StoreKey::MempoolWatchList => StorageKey::new([prefix, "mempool_watch_list"]),
+            StoreKey::MempoolSnapshot => StorageKey::new([prefix, "mempool_snapshot"]),
+        };
+        Ok(key?)
     }
 
     /// Stores a block and the height entry of each of its transactions.
     pub fn save_block(&self, block: &FullBlock) -> Result<(), IndexerError> {
         for tx in &block.txs {
-            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()));
+            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()))?;
             self.store.set(key, block.height, None)?;
         }
 
-        let key = self.get_key(StoreKey::Block(block.height));
+        let key = self.get_key(StoreKey::Block(block.height))?;
         self.store.set(key, block, None)?;
 
         Ok(())
@@ -62,11 +64,11 @@ impl IndexerStore {
         };
 
         for tx in &block.txs {
-            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()));
+            let key = self.get_key(StoreKey::TxHeight(tx.compute_txid()))?;
             self.store.remove(key, None)?;
         }
 
-        let key = self.get_key(StoreKey::Block(height));
+        let key = self.get_key(StoreKey::Block(height))?;
         self.store.remove(key, None)?;
 
         Ok(())
@@ -74,7 +76,7 @@ impl IndexerStore {
 
     /// Retrieves the block at this height, if the indexer still holds it.
     pub fn get_block(&self, height: BlockHeight) -> Result<Option<FullBlock>, IndexerError> {
-        let key = self.get_key(StoreKey::Block(height));
+        let key = self.get_key(StoreKey::Block(height))?;
         Ok(self.store.get(key, None)?)
     }
 
@@ -86,7 +88,7 @@ impl IndexerStore {
 
     /// Height of the block that holds this transaction, if the indexer still holds that block.
     pub fn get_tx_height(&self, tx_id: &Txid) -> Result<Option<BlockHeight>, IndexerError> {
-        let key = self.get_key(StoreKey::TxHeight(*tx_id));
+        let key = self.get_key(StoreKey::TxHeight(*tx_id))?;
         Ok(self.store.get(key, None)?)
     }
 
@@ -122,7 +124,7 @@ impl IndexerStore {
 
     /// Retrieves the height of the block at the cursor, if any.
     pub fn get_cursor(&self) -> Result<Option<BlockHeight>, IndexerError> {
-        let key = self.get_key(StoreKey::Cursor);
+        let key = self.get_key(StoreKey::Cursor)?;
         Ok(self.store.get(key, None)?)
     }
 
@@ -135,27 +137,27 @@ impl IndexerStore {
 
     /// Saves the height of the block at the cursor.
     pub fn save_cursor(&self, height: BlockHeight) -> Result<(), IndexerError> {
-        let key = self.get_key(StoreKey::Cursor);
+        let key = self.get_key(StoreKey::Cursor)?;
         self.store.set(key, height, None)?;
         Ok(())
     }
 
     /// Retrieves the height of the first block this database ever indexed, if the first tick has run.
     pub fn get_first_height(&self) -> Result<Option<BlockHeight>, IndexerError> {
-        let key = self.get_key(StoreKey::FirstHeight);
+        let key = self.get_key(StoreKey::FirstHeight)?;
         Ok(self.store.get(key, None)?)
     }
 
     /// Saves the height of the first block this database ever indexed.
     pub fn save_first_height(&self, height: BlockHeight) -> Result<(), IndexerError> {
-        let key = self.get_key(StoreKey::FirstHeight);
+        let key = self.get_key(StoreKey::FirstHeight)?;
         self.store.set(key, height, None)?;
         Ok(())
     }
 
     /// Retrieves the list of watched txids and their confirmation heights.
     pub fn get_mempool_watch_list(&self) -> Result<Vec<MempoolWatchEntry>, IndexerError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
+        let key = self.get_key(StoreKey::MempoolWatchList)?;
         Ok(self.store.get(key, None)?.unwrap_or_default())
     }
 
@@ -164,7 +166,7 @@ impl IndexerStore {
         &self,
         list: Vec<MempoolWatchEntry>,
     ) -> Result<(), IndexerError> {
-        let key = self.get_key(StoreKey::MempoolWatchList);
+        let key = self.get_key(StoreKey::MempoolWatchList)?;
         self.store.set(key, list, None)?;
         Ok(())
     }
@@ -191,14 +193,14 @@ impl IndexerStore {
 
     /// Saves the list of txids the node held in its mempool when the last tick ended.
     pub fn save_mempool_snapshot(&self, tx_ids: Vec<Txid>) -> Result<(), IndexerError> {
-        let key = self.get_key(StoreKey::MempoolSnapshot);
+        let key = self.get_key(StoreKey::MempoolSnapshot)?;
         self.store.set(key, tx_ids, None)?;
         Ok(())
     }
 
     /// Checks whether a txid is in the list of txids the node held in its mempool.
     pub fn is_in_mempool_snapshot(&self, tx_id: &Txid) -> Result<bool, IndexerError> {
-        let key = self.get_key(StoreKey::MempoolSnapshot);
+        let key = self.get_key(StoreKey::MempoolSnapshot)?;
         let list: Vec<Txid> = self.store.get(key, None)?.unwrap_or_default();
         Ok(list.contains(tx_id))
     }
