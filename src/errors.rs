@@ -1,53 +1,42 @@
 use bitvmx_bitcoin_rpc::errors::BitcoinClientError;
+use bitvmx_bitcoin_rpc::types::BlockHeight;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum IndexerStoreError {
-    #[error("Error with the store client")]
-    StoreError(#[from] storage_backend::error::StorageError),
-
-    #[error("Block not found")]
-    BlockNotFound,
-}
-
-#[derive(Error, Debug)]
 pub enum IndexerError {
-    #[error("Error with the Bitcoin client")]
+    #[error("Bad configuration: {0}")]
+    InvalidConfiguration(String),
+
+    #[error("Bitcoin client error: {0}")]
     BitcoinClientError(#[from] BitcoinClientError),
 
-    #[error("Error with the store")]
-    StoreError(#[from] IndexerStoreError),
+    #[error("Storage backend error: {0}")]
+    StorageError(#[from] storage_backend::error::StorageError),
 
-    #[error("Inconsistent blockchain state")]
-    InconsistentBlockchain,
+    /// A block the indexer needs is neither stored nor available from the node.
+    #[error("Block at height {0} not found")]
+    BlockNotFound(BlockHeight),
 
-    #[error("Indexed block hash does not match blockchain hash")]
-    IndexedBlockHashMismatch,
-
-    #[error("Database is corrupted")]
-    DatabaseCorrupted,
-
-    #[error("Checkpoint height is ahead of blockchain height")]
-    CheckpointHeightAheadOfBlockchainHeight,
-
-    #[error("Block not found")]
-    BlockNotFound,
+    /// The node's chain changed below the oldest block the indexer holds, so the indexer cannot continue.
+    #[error(
+        "Reorg deeper than the retention window: no block stored at height {0} to continue from"
+    )]
+    ReorgDeeperThanWindow(BlockHeight),
 
     #[error("Fee rate can't be estimated")]
     FeeRateNotEstimated,
 
     #[error("Indexer is not synchronized")]
-    IndexerNotSynced,
+    NotSynced,
 
-    #[error("Already indexed with different checkpoint height")]
-    AlreadyIndexedWithDifferentCheckpointHeight,
+    #[error("The transaction is not confirmed")]
+    NotConfirmed,
 
-    #[error("Checkpoint height is behind indexed height")]
-    CheckpointHeightBehindIndexedHeight,
+    /// Something the indexer could not do, with no better variant for it.
+    #[error("Internal error: {0}")]
+    Internal(String),
 
-    #[error("Missing transaction data in tx_status")]
-    MissingTransactionData,
-
-    #[error("Missing block info in tx_status")]
-    MissingBlockInfo,
+    /// Storage contradicts itself, which means a bug rather than a chain or node condition.
+    #[error("Invariant violated: {0}")]
+    InvariantViolation(String),
 }
