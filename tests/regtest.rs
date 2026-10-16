@@ -856,11 +856,12 @@ fn fee_rate() -> anyhow::Result<()> {
         Err(IndexerError::FeeRateNotEstimated)
     ));
 
-    // A node block the indexer has not reached.
+    // A node block the indexer has not reached changes nothing: the rate stays the one of the last indexed block until
+    // a tick reaches the new one.
     node.mine(1)?;
     assert!(matches!(
         indexer.get_estimated_fee_rate(),
-        Err(IndexerError::NotSynced)
+        Err(IndexerError::FeeRateNotEstimated)
     ));
     indexer.tick()?;
     assert!(matches!(

@@ -55,7 +55,7 @@ The `Indexer` struct exposes:
 | `get_stored_block` | The same block, from the indexer alone. |
 | `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node about confirmations when the indexer holds nothing. |
 | `get_stored_transaction` | The same status, from the indexer alone. |
-| `get_estimated_fee_rate` | Fee rate of the last indexed block, once the indexer is at the tip. |
+| `get_estimated_fee_rate` | Fee rate of the last indexed block, from storage with no node call. Check `is_ready` first when the rate must be the tip's. |
 | `add_mempool_watch` / `remove_mempool_watch` | Register or drop a txid to follow in the mempool. |
 | `rpc_is_utxo_spent` / `rpc_get_tx_confirmations` | Live node checks, passed straight through. |
 
@@ -114,7 +114,7 @@ So the mempool is answered by step 2 or not at all: a transaction the consumer d
 
 > ⚠️ **Use the same `retention_depth` across restarts.** Pruning is computed from the configured depth, so lowering it leaves the blocks below the new window, and their transaction entries, in storage.
 
-> 💡 **Queries are answered as of the last tick.** `is_ready` and `get_estimated_fee_rate` compare heights, and the mempool snapshot is the one the last tick wrote, so a reorg is reflected on the next tick.
+> 💡 **Queries are answered as of the last tick.** `get_estimated_fee_rate` is the rate of the last indexed block, and the mempool snapshot is the one the last tick wrote, so a reorg is reflected on the next tick.
 
 > 💡 **The watch list belongs to the consumer.** Entries are never removed by the indexer, not on confirmation and not after a reorg, so a consumer that no longer cares about a txid removes it.
 

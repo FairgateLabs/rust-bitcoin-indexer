@@ -213,13 +213,10 @@ where
         }
     }
 
-    /// Fee rate estimated from the most recently indexed block.
+    /// Fee rate estimated from the most recently indexed block, read from storage with no node call. It is as fresh
+    /// as the last tick, so a caller that needs the rate of the node's tip checks `is_ready` first.
     pub fn get_estimated_fee_rate(&self) -> Result<u64, IndexerError> {
         let last_block = self.get_last_indexed_block()?;
-
-        if last_block.height != self.bitcoin_client.get_tip_height()? {
-            return Err(IndexerError::NotSynced);
-        }
 
         if last_block.estimated_fee_rate == 0 {
             return Err(IndexerError::FeeRateNotEstimated);
