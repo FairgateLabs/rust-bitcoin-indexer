@@ -119,7 +119,11 @@ fn restart_resumes() -> anyhow::Result<()> {
     assert_eq!(indexer.get_indexed_height()?, 101);
     assert_eq!(indexer.tick()?, TickResult::Idle);
     assert_eq!(indexer.get_indexed_height()?, 101);
-    assert_eq!(indexer.get_first_indexed_height()?, 98, "a restart keeps the first block it ever indexed");
+    assert_eq!(
+        indexer.get_first_indexed_height()?,
+        98,
+        "a restart keeps the first block it ever indexed"
+    );
     drop(indexer);
 
     // A gap longer than the window: every block is indexed, and only the last window stays stored.
@@ -619,6 +623,44 @@ fn double_spend_and_flip_back() -> anyhow::Result<()> {
         TransactionStatus::NotFound
     );
     assert_eq!(store.get_mempool_watch_list()?, vec![(tx_id, Some(height))]);
+
+    Ok(())
+}
+
+// A transaction whose block was orphaned, and whose input the winning chain spent, is in neither the mempool nor the
+// active chain. The node's transaction index still finds it in the orphaned block, and the live probe answers None.
+#[test]
+fn orphaned_transaction_confirmations() -> anyhow::Result<()> {
+    init_trace();
+    let node = TestNode::start(110)?;
+    let storage = TestStorage::new();
+    let indexer = node.indexer(storage.storage(), 10)?;
+
+    let (tx, conflicting) = node.conflicting_txs()?;
+    let tx_id = tx.compute_txid();
+    let conflicting_id = conflicting.compute_txid();
+
+    // The transaction is mined with one confirmation.
+    let orphaned_hash = node.mine_with(&[tx])?;
+    assert_eq!(indexer.rpc_get_tx_confirmations(&tx_id)?, Some(1));
+
+    // Its block is replaced by one that mines the conflicting transaction, so it cannot go back to the mempool.
+    let height = node.tip()?;
+    assert_eq!(node.invalidate(height)?, orphaned_hash);
+    node.mine_with(&[conflicting])?;
+    assert!(!node.client.check_in_mempool(&tx_id)?);
+    assert_eq!(indexer.rpc_get_tx_confirmations(&conflicting_id)?, Some(1));
+
+    // The node's transaction index still points at the orphaned block.
+    let info = node
+        .client
+        .get_raw_transaction_info(&tx_id)?
+        .expect("the node still knows the transaction");
+    assert_eq!(info.blockhash, Some(orphaned_hash));
+
+    // Zero confirmations with a blockhash means a block outside the active chain, not the mempool, so a caller
+    // that resends or waits on a pending transaction never takes this one for pending.
+    assert_eq!(indexer.rpc_get_tx_confirmations(&tx_id)?, None);
 
     Ok(())
 }

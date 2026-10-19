@@ -238,8 +238,8 @@ where
             .is_utxo_spent(tx_id, vout, include_mempool)?)
     }
 
-    /// Live `getrawtransaction` confirmation probe. `None` when the node does not know the transaction,
-    /// `Some(0)` when it is in the mempool, `Some(n)` when it is mined with n confirmations.
+    /// Live `getrawtransaction` confirmation probe. `None` when the transaction is neither in the mempool nor in the
+    /// node's active chain, `Some(0)` when it is in the mempool, `Some(n)` when it is mined with n confirmations.
     pub fn rpc_get_tx_confirmations(&self, tx_id: &Txid) -> Result<Option<u32>, IndexerError> {
         Ok(self.bitcoin_client.get_tx_confirmations(tx_id)?)
     }
