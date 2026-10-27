@@ -61,6 +61,8 @@ The `Indexer` struct exposes:
 
 Methods with the `rpc_` prefix answer from the node alone, with none of the indexer's own state involved.
 
+`IndexerError` exposes `is_bitcoin_client_error` and `is_storage_error`, true when the error came from the Bitcoin node client or from the storage backend. Every other error, answers false to both.
+
 ## Usage
 
 ```rust

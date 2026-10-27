@@ -40,3 +40,37 @@ pub enum IndexerError {
     #[error("Invariant violated: {0}")]
     InvariantViolation(String),
 }
+
+impl IndexerError {
+    /// True when the error came from the Bitcoin node client.
+    pub fn is_bitcoin_client_error(&self) -> bool {
+        matches!(self, IndexerError::BitcoinClientError(_))
+    }
+
+    /// True when the error came from the storage backend.
+    pub fn is_storage_error(&self) -> bool {
+        matches!(self, IndexerError::StorageError(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use storage_backend::error::StorageError;
+
+    #[test]
+    fn test_error_classification() {
+        let client = IndexerError::from(BitcoinClientError::InvalidHeight);
+        assert!(client.is_bitcoin_client_error());
+        assert!(!client.is_storage_error());
+
+        let storage = IndexerError::from(StorageError::WriteError);
+        assert!(storage.is_storage_error());
+        assert!(!storage.is_bitcoin_client_error());
+
+        // A block the node does not have is not a client failure.
+        let other = IndexerError::BlockNotFound(1);
+        assert!(!other.is_bitcoin_client_error());
+        assert!(!other.is_storage_error());
+    }
+}
