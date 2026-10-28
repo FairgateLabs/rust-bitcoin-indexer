@@ -2,10 +2,12 @@
 mod common;
 use common::*;
 
+use bitcoin::hashes::Hash;
 use bitcoin::{Block, Transaction, Txid};
 use bitcoin_indexer::store::IndexerStore;
 use bitcoin_indexer::{IndexerError, TickResult, TransactionStatus};
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::BlockHeight};
+use std::collections::HashMap;
 
 /// The transaction as the node has it.
 fn node_tx(node: &TestNode, tx_id: &Txid) -> anyhow::Result<Transaction> {
@@ -789,6 +791,13 @@ fn window_boundary() -> anyhow::Result<()> {
         );
     }
 
+    // The batch gives the same answer, and leaves out a txid in no held block.
+    let unknown = Txid::all_zeros();
+    assert_eq!(
+        indexer.get_stored_transactions(&[tx_id, unknown, tx_id])?,
+        HashMap::from([(tx_id, confirmed(&node, &tx_id, 111, 3)?)])
+    );
+
     // One more block prunes it. The indexer no longer holds it, and only the node can answer.
     node.mine(1)?;
     node.sync(&indexer)?;
@@ -804,6 +813,7 @@ fn window_boundary() -> anyhow::Result<()> {
             confirmed(&node, &tx_id, 111, 4)?
         );
     }
+    assert!(indexer.get_stored_transactions(&[tx_id])?.is_empty());
 
     Ok(())
 }

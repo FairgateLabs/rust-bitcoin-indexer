@@ -8,6 +8,7 @@ use crate::{
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
 use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use storage_backend::storage::Storage;
 use tracing::{info, warn};
@@ -70,7 +71,9 @@ where
     /// Height of the first block this database ever indexed, so nothing below it was ever read. Fails with `NotSynced`
     /// until the first tick places it.
     pub fn get_first_indexed_height(&self) -> Result<BlockHeight, IndexerError> {
-        self.store.get_first_height()?.ok_or(IndexerError::NotSynced)
+        self.store
+            .get_first_height()?
+            .ok_or(IndexerError::NotSynced)
     }
 
     /// The highest block the indexer has read. Always present once the first tick has run.
@@ -194,6 +197,56 @@ where
         }
 
         Ok(TransactionStatus::NotFound)
+    }
+
+    /// Where each of these transactions is confirmed, among the blocks the indexer holds. Each block is
+    /// read once, whatever number of the transactions it holds. The mempool snapshot is not checked.
+    pub fn get_stored_transactions(
+        &self,
+        tx_ids: &[Txid],
+    ) -> Result<HashMap<Txid, TransactionStatus>, IndexerError> {
+        let cursor = self.get_indexed_height()?;
+
+        let mut by_height: HashMap<BlockHeight, HashSet<Txid>> = HashMap::new();
+        for tx_id in tx_ids {
+            if let Some(height) = self.store.get_tx_height(tx_id)? {
+                by_height.entry(height).or_default().insert(*tx_id);
+            }
+        }
+
+        let mut found = HashMap::new();
+        for (height, mut wanted) in by_height {
+            let block = self.store.get_block(height)?.ok_or_else(|| {
+                IndexerError::InvariantViolation(format!(
+                    "transactions point at height {height}, where no block is stored"
+                ))
+            })?;
+
+            // Walks the block until every transaction asked for in it is found.
+            for tx in block.txs {
+                let tx_id = tx.compute_txid();
+                if wanted.remove(&tx_id) {
+                    let status = TransactionStatus::new(
+                        tx,
+                        block.height,
+                        block.hash,
+                        confirmations(cursor, block.height),
+                    );
+                    found.insert(tx_id, status);
+                }
+                if wanted.is_empty() {
+                    break;
+                }
+            }
+
+            if let Some(tx_id) = wanted.iter().next() {
+                return Err(IndexerError::InvariantViolation(format!(
+                    "transaction {tx_id} points at height {height}, whose block does not contain it"
+                )));
+            }
+        }
+
+        Ok(found)
     }
 
     /// What the indexer knows about a transaction, in three steps:

@@ -55,6 +55,7 @@ The `Indexer` struct exposes:
 | `get_stored_block` | The same block, from the indexer alone. |
 | `get_transaction` | The status of a txid: confirmed, with the transaction, its block's height and hash and its confirmations; in the mempool; or not found. Asks the node about confirmations when the indexer holds nothing. |
 | `get_stored_transaction` | The same status, from the indexer alone. |
+| `get_stored_transactions` | The confirmed status of several txids, from the blocks the indexer holds, reading each block once. The mempool snapshot is not checked. |
 | `get_estimated_fee_rate` | Fee rate of the last indexed block, from storage with no node call. Check `is_ready` first when the rate must be the tip's. |
 | `add_mempool_watch` / `remove_mempool_watch` | Register or drop a txid to follow in the mempool. |
 | `rpc_is_utxo_spent` / `rpc_get_tx_confirmations` | Live node checks, passed straight through. |
@@ -107,6 +108,8 @@ indexer.remove_mempool_watch(&tx_id)?;
 So the mempool is answered by step 2 or not at all: a transaction the consumer did not put on the watch list is never reported `InMempool`, and one that was just broadcast reads `NotFound` until the next tick writes the snapshot.
 
 `get_stored_transaction(txid, include_mempool)` stops after step 2, for a caller that wants no node call and reads `NotFound` as "the indexer holds nothing about it".
+
+`get_stored_transactions(txids)` is step 1 for many txids at once. Each block is read once however many of them it holds, and a txid in no held block is left out of the map.
 
 `get_block(height, hash)` follows the same idea: a block the indexer holds is returned when the hash matches, a block below the window is downloaded from the node when the node has that hash at that height, and anything the indexer has not processed yet gives `None`. `get_stored_block(height, hash)` stops at the first of those, for a caller that wants no node call.
 
