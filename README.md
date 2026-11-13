@@ -125,6 +125,12 @@ So the mempool is answered by step 2 or not at all: a transaction the consumer d
 
 > 💡 **A transaction outside the window costs node calls.** Answers from a held block are free, while step 3 asks the node on every call.
 
+## Contract
+
+- **Run each tick in a transaction.** The indexer's writes are not atomic on their own, so wrap every `tick()` in `begin_global_transaction` / `commit_global_transaction` and roll back when it returns `Err`.
+- **Tick to the tip before trusting a query.** Answers are as of the last tick, so check `is_ready()` first. `get_estimated_fee_rate` relies on this to be the tip's rate.
+- **The mempool snapshot starts empty.** After a restart, no transaction reads `InMempool` until the first successful tick.
+
 ## Configuration
 
 `IndexerConfig` has three sections: `storage`, `rpc` and `settings`. A sample is in `config/development.yaml`.
