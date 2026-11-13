@@ -304,6 +304,48 @@ fn mempool_check_error() {
     ));
 }
 
+// The consumer runs each tick in its global transaction and rolls it back when the tick fails. A first tick that
+// fails after writing the first block leaves an empty database again, and the next tick starts fresh from it.
+#[test]
+fn rolled_back_first_tick_starts_again() {
+    let storage = TestStorage::new();
+    let store = storage.store();
+    store.add_mempool_watch(dummy_tx(1).compute_txid()).unwrap();
+
+    // The mempool check fails on the first tick only.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut node = mock_node(3);
+    node.expect_get_block_by_height()
+        .returning(|height| Ok(Some(chain_block(*height, vec![]))));
+    let counter = calls.clone();
+    node.expect_check_in_mempool().returning(move |_| {
+        match counter.fetch_add(1, Ordering::SeqCst) {
+            0 => Err(rpc_error()),
+            _ => Ok(false),
+        }
+    });
+
+    let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
+
+    // The first block is written inside the transaction, then the mempool check fails and the consumer rolls back.
+    storage.storage().begin_global_transaction().unwrap();
+    assert!(matches!(
+        indexer.tick(),
+        Err(IndexerError::BitcoinClientError(_))
+    ));
+    storage.storage().rollback_global_transaction().unwrap();
+    assert_eq!(store.get_cursor().unwrap(), None);
+    assert_eq!(store.get_block(0).unwrap(), None);
+
+    // The next tick finds no cursor and starts fresh, instead of failing with NotSynced.
+    storage.storage().begin_global_transaction().unwrap();
+    assert_eq!(indexer.tick().unwrap(), TickResult::Advanced);
+    storage.storage().commit_global_transaction().unwrap();
+    assert_eq!(indexer.get_indexed_height().unwrap(), 0);
+    assert_eq!(store.get_block(0).unwrap(), Some(full_block(0, vec![])));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
 // A tick that was interrupted, by a crash or by a failed node call, leaves a state the next start or tick continues from.
 #[test]
 fn interrupted_tick_recovers() {

@@ -7,7 +7,6 @@ use crate::{
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use storage_backend::storage::Storage;
@@ -21,7 +20,6 @@ where
     bitcoin_client: B,
     store: IndexerStore,
     settings: IndexerSettings,
-    started: Cell<bool>, // Whether the startup has run. The node is only read from tick, so the first one places the cursor.
 }
 
 impl<B> Indexer<B>
@@ -46,7 +44,6 @@ where
             bitcoin_client,
             store,
             settings,
-            started: Cell::new(false),
         })
     }
 
@@ -301,40 +298,19 @@ where
     // Private helpers
     // =========================================================================
 
-    /// Places the cursor on the first tick: a fresh database starts one window below the tip, and a restart resumes
-    /// from its cursor, reading every block in between.
-    fn start(&self, tip: BlockHeight) -> Result<TickResult, IndexerError> {
-        // A reorg that happened while the indexer was down is not handled here. tick() is the only place that unwinds one.
-        match self.store.get_cursor()? {
-            // A fresh database has nothing to resume from. Start one window below the tip.
-            None => {
-                let window_start = window_start(tip, self.settings.retention_depth);
-                info!("No cursor stored, starting at height {window_start} (tip {tip})");
-                self.index_first_block(window_start)?;
-                Ok(TickResult::Advanced)
-            }
-            // A restart resumes from its cursor, and the ticks that follow read every block up to the tip.
-            Some(cursor) => {
-                info!("Resuming from height {cursor} (tip {tip})");
-                Ok(TickResult::Idle)
-            }
-        }
-    }
-
     /// Indexes one block, or removes the blocks a reorg took off the chain.
     fn advance(&self) -> Result<TickResult, IndexerError> {
         let tip = self.bitcoin_client.get_tip_height()?;
 
-        if !self.started.get() {
-            let result = self.start(tip)?;
-            self.started.set(true);
-
-            if result != TickResult::Idle {
-                return Ok(result);
-            }
-        }
-
-        let cursor = self.get_indexed_height()?;
+        // A fresh database has nothing to resume from, so it starts one window below the tip. This is decided from
+        // storage, so a tick whose writes the consumer rolled back starts again on the next one. A restart resumes
+        // from its cursor, and a reorg that happened while the indexer was down is unwound below like any other.
+        let Some(cursor) = self.store.get_cursor()? else {
+            let window_start = window_start(tip, self.settings.retention_depth);
+            info!("No cursor stored, starting at height {window_start} (tip {tip})");
+            self.index_first_block(window_start)?;
+            return Ok(TickResult::Advanced);
+        };
 
         // The node's chain is shorter than the indexed one.
         if cursor > tip {
