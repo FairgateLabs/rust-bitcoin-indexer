@@ -99,6 +99,23 @@ fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderResult {
     .expect("a getblockheader answer")
 }
 
+// A node without the transaction index makes the tick fail before anything else is read or stored.
+#[test]
+fn tick_requires_txindex() {
+    let storage = TestStorage::new();
+
+    let mut node = MockBitcoinClientApi::new();
+    node.expect_is_txindex_enabled().returning(|| Ok(false));
+
+    let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
+
+    assert!(matches!(
+        indexer.tick(),
+        Err(IndexerError::InvalidConfiguration(_))
+    ));
+    assert_eq!(storage.store().get_cursor().unwrap(), None);
+}
+
 // A retention depth below the minimum is refused, and building the indexer never reads the node.
 #[test]
 fn new_rejects_invalid_setup() {

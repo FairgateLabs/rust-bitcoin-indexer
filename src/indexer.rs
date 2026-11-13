@@ -7,6 +7,7 @@ use crate::{
 };
 use bitcoin::Txid;
 use bitvmx_bitcoin_rpc::{bitcoin_client::BitcoinClientApi, types::*};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use storage_backend::storage::Storage;
@@ -20,6 +21,7 @@ where
     bitcoin_client: B,
     store: IndexerStore,
     settings: IndexerSettings,
+    txindex_checked: Cell<bool>, // Whether the node's transaction index was found on a tick of this process.
 }
 
 impl<B> Indexer<B>
@@ -44,6 +46,7 @@ where
             bitcoin_client,
             store,
             settings,
+            txindex_checked: Cell::new(false),
         })
     }
 
@@ -300,6 +303,17 @@ where
 
     /// Indexes one block, or removes the blocks a reorg took off the chain.
     fn advance(&self) -> Result<TickResult, IndexerError> {
+        // The node fallback in get_transaction and rpc_get_tx_confirmations need the transaction index. It is node
+        // configuration, not storage, so a check that passed stays valid when the consumer rolls back a tick.
+        if !self.txindex_checked.get() {
+            if !self.bitcoin_client.is_txindex_enabled()? {
+                return Err(IndexerError::InvalidConfiguration(
+                    "the node must run with -txindex=1".to_string(),
+                ));
+            }
+            self.txindex_checked.set(true);
+        }
+
         let tip = self.bitcoin_client.get_tip_height()?;
 
         // A fresh database has nothing to resume from, so it starts one window below the tip. This is decided from
