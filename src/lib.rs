@@ -3,7 +3,8 @@ use bitvmx_bitcoin_rpc::bitcoin_client::BitcoinClient;
 pub mod config;
 pub mod errors;
 pub mod indexer;
-pub mod store; // Only the indexer writes to storage. The module stays reachable so the integration tests can read what a tick wrote.
+#[doc(hidden)]
+pub mod store; // Not part of the API: only the indexer writes to storage. It stays reachable so tests can read what a tick wrote.
 pub mod types;
 
 pub(crate) mod helper;

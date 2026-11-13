@@ -36,7 +36,7 @@ where
         let settings = settings.unwrap_or_default();
         settings.validate()?;
 
-        let store = IndexerStore::new(storage)?;
+        let store = IndexerStore::new(storage);
 
         // The stored snapshot describes the mempool as the previous run left it, so nothing
         // in it is trusted until the first tick refreshes it.
@@ -109,6 +109,8 @@ where
     /// - If `height` is below every block the indexer holds and the node's block at `height` has that hash, it is
     ///   downloaded from the node.
     /// - Otherwise it returns `None`, because that block is not on the chain the indexer has processed.
+    ///
+    /// A downloaded block carries no fee estimate, `estimated_fee_rate` is 0.
     pub fn get_block(
         &self,
         height: BlockHeight,
@@ -141,14 +143,13 @@ where
         }
 
         let block = self.bitcoin_client.get_block_by_hash(hash)?;
-        let estimated_fee_rate = estimate_fee_rate(&self.bitcoin_client, &block.txdata)?;
 
         Ok(Some(FullBlock {
             height,
             hash: block.block_hash(),
             prev_hash: block.header.prev_blockhash,
             txs: block.txdata,
-            estimated_fee_rate,
+            estimated_fee_rate: 0,
         }))
     }
 

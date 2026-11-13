@@ -213,7 +213,7 @@ fn tick_and_prune() -> anyhow::Result<()> {
 // Reorgs
 // =============================================================================
 
-// A reorg is unwound one block per tick and the new chain is indexed, however it happens.
+// A reorg is unwound in one tick and the new chain is then indexed block by block, however it happens.
 #[test]
 fn reorg_unwinds() -> anyhow::Result<()> {
     init_trace();

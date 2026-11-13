@@ -55,5 +55,5 @@ pub fn temp_store() -> Rc<IndexerStore> {
     let config = StorageConfig::new(path.to_string_lossy().to_string(), None);
     let storage = Rc::new(Storage::new(&config).expect("storage"));
 
-    Rc::new(IndexerStore::new(storage).expect("store"))
+    Rc::new(IndexerStore::new(storage))
 }

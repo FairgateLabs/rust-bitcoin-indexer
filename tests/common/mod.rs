@@ -85,7 +85,7 @@ impl TestStorage {
 
     /// A store over the same storage, to read what the indexer wrote.
     pub fn store(&self) -> Rc<IndexerStore> {
-        Rc::new(IndexerStore::new(self.storage()).expect("test store"))
+        Rc::new(IndexerStore::new(self.storage()))
     }
 }
 

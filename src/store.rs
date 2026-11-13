@@ -26,8 +26,8 @@ enum StoreKey {
 }
 
 impl IndexerStore {
-    pub fn new(store: Rc<Storage>) -> Result<Self, IndexerError> {
-        Ok(Self { store })
+    pub fn new(store: Rc<Storage>) -> Self {
+        Self { store }
     }
 
     fn get_key(&self, key: StoreKey) -> Result<StorageKey, IndexerError> {
