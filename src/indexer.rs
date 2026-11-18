@@ -280,7 +280,7 @@ where
     }
 
     /// Live RPC check for UTXO spendability, bypassing everything the indexer stores.
-    /// True when the UTXO is spent, counting the mempool when `include_mempool` is true.
+    /// True when the output is not in the node's UTXO set, counting the mempool when `include_mempool` is true.
     pub fn rpc_is_utxo_spent(
         &self,
         tx_id: &Txid,
