@@ -5,7 +5,6 @@ use crate::types::FullBlock;
 use bitcoin::{Transaction, Txid};
 use bitvmx_bitcoin_rpc::types::BlockHeight;
 use storage_backend::key::StorageKey;
-use storage_backend::storage::KeyValueStore;
 use storage_backend::storage::Storage;
 
 /// One entry of the mempool watch list: a txid a consumer asked to follow, and where it stands.
