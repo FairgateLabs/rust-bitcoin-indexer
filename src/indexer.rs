@@ -564,7 +564,7 @@ where
         };
 
         // No block hash means the node holds it in its mempool, which only a watched txid answers.
-        let Some(block_hash) = info.blockhash else {
+        let Some(block_hash) = info.block_hash else {
             return Ok(TransactionStatus::NotFound);
         };
 
@@ -585,14 +585,8 @@ where
             return Ok(TransactionStatus::NotFound);
         }
 
-        let tx = info.transaction().map_err(|e| {
-            IndexerError::Internal(format!(
-                "the node returned transaction {tx_id} in a form that does not decode: {e}"
-            ))
-        })?;
-
         Ok(TransactionStatus::new(
-            tx,
+            info.transaction,
             height,
             block_hash,
             confirmations(cursor, height),

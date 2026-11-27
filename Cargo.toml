@@ -21,7 +21,6 @@ bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoi
 anyhow = "1.0.104"
 serde_json = "1.0"
 tracing-subscriber = "0.3.23"
-bitcoincore-rpc = "0.19"
 bitcoind = { git = "https://github.com/FairgateLabs/rust-bitcoind.git", tag = "v0.8.11" }
 bitvmx-bitcoin-rpc = { git = "https://github.com/FairgateLabs/rust-bitvmx-bitcoin-rpc.git", tag = "v0.8.11", features = [
     "testing",
