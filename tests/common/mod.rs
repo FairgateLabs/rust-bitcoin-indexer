@@ -10,8 +10,6 @@ use bitcoin::{
 };
 use bitcoin_indexer::store::IndexerStore;
 use bitcoin_indexer::{Indexer, IndexerError, IndexerSettings, IndexerType};
-use bitcoincore_rpc::json::CreateRawTransactionInput;
-use bitcoincore_rpc::RpcApi;
 use bitcoind::{bitcoind::Bitcoind, config::BitcoindConfig};
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::{BitcoinClient, BitcoinClientApi},
@@ -210,15 +208,11 @@ impl TestNode {
 
     /// Makes an invalidated block valid again, so the node can switch back to its chain.
     pub fn reconsider(&self, hash: &BlockHash) -> anyhow::Result<()> {
-        Ok(self.client.client.reconsider_block(hash)?)
+        Ok(self.client.reconsider_block(hash)?)
     }
 
     pub fn fresh_address(&self) -> anyhow::Result<Address> {
-        Ok(self
-            .client
-            .client
-            .get_new_address(None, None)?
-            .assume_checked())
+        Ok(self.client.get_wallet_address()?)
     }
 
     /// Sends `sats` to a fresh wallet address through the wallet, which broadcasts it.
@@ -238,34 +232,19 @@ impl TestNode {
             txid: tx.compute_txid(),
             vout,
         };
-        self.client.client.lock_unspent(&[outpoint])?;
+        self.client.lock_unspent(&outpoint)?;
         Ok(outpoint)
     }
 
     /// A signed, not broadcast transaction spending `outpoint` to a fresh wallet address.
     pub fn sign_spend(&self, outpoint: OutPoint, value_out: u64) -> anyhow::Result<Transaction> {
-        let inputs = [CreateRawTransactionInput {
-            txid: outpoint.txid,
-            vout: outpoint.vout,
-            sequence: None,
-        }];
         let mut outputs = HashMap::new();
         outputs.insert(
             self.fresh_address()?.to_string(),
             Amount::from_sat(value_out),
         );
 
-        let raw = self
-            .client
-            .client
-            .create_raw_transaction(&inputs, &outputs, None, None)?;
-        let signed = self
-            .client
-            .client
-            .sign_raw_transaction_with_wallet(&raw, None, None)?;
-        anyhow::ensure!(signed.complete, "signing incomplete: {:?}", signed.errors);
-
-        Ok(bitcoin::consensus::deserialize(&signed.hex)?)
+        Ok(self.client.sign_spend(&[outpoint], &outputs, &[])?)
     }
 
     /// Two signed, not broadcast transactions spending the same output. The first pays the higher fee, so it can

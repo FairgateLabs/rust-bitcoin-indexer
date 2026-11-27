@@ -32,10 +32,6 @@ pub enum IndexerError {
     #[error("The transaction is not confirmed")]
     NotConfirmed,
 
-    /// Something the indexer could not do, with no better variant for it.
-    #[error("Internal error: {0}")]
-    Internal(String),
-
     /// Storage contradicts itself, which means a bug rather than a chain or node condition.
     #[error("Invariant violated: {0}")]
     InvariantViolation(String),

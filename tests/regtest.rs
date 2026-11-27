@@ -602,7 +602,7 @@ fn double_spend_and_flip_back() -> anyhow::Result<()> {
         .client
         .get_raw_transaction_info(&tx_id)?
         .expect("the node still knows the transaction");
-    assert_eq!(info.blockhash, Some(old_hash));
+    assert_eq!(info.block_hash, Some(old_hash));
     assert_eq!(info.confirmations.unwrap_or(0), 0);
 
     // The entry stays on the watch list, pending, however many ticks read NotFound.
@@ -658,7 +658,7 @@ fn orphaned_transaction_confirmations() -> anyhow::Result<()> {
         .client
         .get_raw_transaction_info(&tx_id)?
         .expect("the node still knows the transaction");
-    assert_eq!(info.blockhash, Some(orphaned_hash));
+    assert_eq!(info.block_hash, Some(orphaned_hash));
 
     // Zero confirmations with a blockhash means a block outside the active chain, not the mempool, so a caller
     // that resends or waits on a pending transaction never takes this one for pending.

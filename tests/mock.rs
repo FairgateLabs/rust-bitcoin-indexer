@@ -5,13 +5,15 @@ use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash;
 use bitcoin::{BlockHash, Transaction};
 use bitcoin_indexer::{FullBlock, Indexer, IndexerError, TickResult, TransactionStatus};
-use bitcoincore_rpc::json::{GetBlockHeaderResult, GetRawTransactionResult};
 use bitvmx_bitcoin_rpc::{
     bitcoin_client::MockBitcoinClientApi,
+    corepc_types::{
+        model::{GetBlockHeaderVerbose, GetRawTransactionVerbose},
+        v29,
+    },
     errors::BitcoinClientError,
     types::{BlockHeight, BlockInfo},
 };
@@ -59,29 +61,21 @@ fn rpc_error() -> BitcoinClientError {
 fn raw_tx_info(
     tx: &Transaction,
     block_hash: Option<BlockHash>,
-    confirmations: Option<u32>,
-) -> GetRawTransactionResult {
-    GetRawTransactionResult {
+    confirmations: Option<u64>,
+) -> GetRawTransactionVerbose {
+    GetRawTransactionVerbose {
         in_active_chain: None,
-        hex: serialize(tx),
-        txid: tx.compute_txid(),
-        hash: tx.compute_wtxid(),
-        size: 0,
-        vsize: 0,
-        version: 2,
-        locktime: 0,
-        vin: vec![],
-        vout: vec![],
-        blockhash: block_hash,
+        transaction: tx.clone(),
+        block_hash,
         confirmations,
-        time: None,
-        blocktime: None,
+        transaction_time: None,
+        block_time: None,
     }
 }
 
 /// The node answer for a block header, built from the JSON `getblockheader` returns.
-fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderResult {
-    serde_json::from_value(serde_json::json!({
+fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderVerbose {
+    serde_json::from_value::<v29::GetBlockHeaderVerbose>(serde_json::json!({
         "hash": hash.to_string(),
         "confirmations": 1,
         "height": height,
@@ -92,11 +86,14 @@ fn header_at(height: BlockHeight, hash: BlockHash) -> GetBlockHeaderResult {
         "mediantime": 0,
         "nonce": 0,
         "bits": "207fffff",
+        "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
         "difficulty": 1.0,
         "chainwork": "0000000000000000000000000000000000000000000000000000000000000002",
         "nTx": 1
     }))
     .expect("a getblockheader answer")
+    .into_model()
+    .expect("a valid header")
 }
 
 // A node without the transaction index makes the tick fail before anything else is read or stored.
@@ -260,26 +257,6 @@ fn get_transaction_from_node() {
             ));
         }
     }
-
-    // A transaction the node returns in a form that does not decode, mined below the window.
-    let storage = TestStorage::new();
-    storage.store().save_block(&full_block(10, vec![])).unwrap();
-    storage.store().save_cursor(10).unwrap();
-
-    let mut node = mock_node(10);
-    let mut answer = raw_tx_info(&tx, Some(block_hash(5)), Some(6));
-    answer.hex = vec![0x00];
-    node.expect_get_raw_transaction_info()
-        .returning(move |_| Ok(Some(answer.clone())));
-    node.expect_get_block_header_info()
-        .returning(|hash| Ok(header_at(5, *hash)));
-
-    let indexer = Indexer::new(node, storage.storage(), settings(5)).unwrap();
-
-    assert!(matches!(
-        indexer.get_transaction(&tx_id, true),
-        Err(IndexerError::Internal(_))
-    ));
 
     // A transaction the node does not know.
     let storage = TestStorage::new();
